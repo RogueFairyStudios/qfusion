@@ -74,7 +74,6 @@ extern cvar_t *win_nowinkeys;
 
 // Global variables used internally by this module
 HWND cl_hwnd;           // Main window handle for life of program
-HWND cl_parent_hwnd;    // pointer to parent window handle
 
 static HHOOK WinKeyHook;
 static bool s_winkeys_hooked;
@@ -326,7 +325,6 @@ LONG WINAPI MainWndProc(
 
 		case WM_CREATE:
 			cl_hwnd = hWnd;
-			cl_parent_hwnd = GetParent( hWnd );
 			IN_WinIME_AssociateContext();
 			AppActivate( TRUE, FALSE, FALSE );
 			MSH_MOUSEWHEEL = RegisterWindowMessage( "MSWHEEL_ROLLMSG" );
@@ -338,7 +336,6 @@ LONG WINAPI MainWndProc(
 		case WM_DESTROY:
 			// let sound and input know about this?
 			cl_hwnd = NULL;
-			cl_parent_hwnd = NULL;
 			IN_WinIME_AssociateContext();
 			AppActivate( FALSE, FALSE, TRUE );
 			break;
@@ -367,23 +364,14 @@ LONG WINAPI MainWndProc(
 		case WM_MOVE:
 		{
 			int xPos, yPos;
-			RECT r;
-			int style;
 
 			if( !vid_fullscreen->integer ) {
 				xPos = (short) LOWORD( lParam ); // horizontal position
 				yPos = (short) HIWORD( lParam ); // vertical position
 
-				r.left   = 0;
-				r.top    = 0;
-				r.right  = 1;
-				r.bottom = 1;
+				Cvar_SetValue( "vid_xpos", xPos );
+				Cvar_SetValue( "vid_ypos", yPos );
 
-				style = GetWindowLong( hWnd, GWL_STYLE );
-				AdjustWindowRect( &r, style, FALSE );
-
-				Cvar_SetValue( "vid_xpos", xPos + r.left );
-				Cvar_SetValue( "vid_ypos", yPos + r.top );
 				vid_xpos->modified = false;
 				vid_ypos->modified = false;
 				if( ActiveApp ) {
@@ -417,6 +405,49 @@ LONG WINAPI MainWndProc(
 			IN_MouseEvent( temp );
 		}
 		break;
+
+		case WM_GETMINMAXINFO:
+			// the default handler won't allow the window size to exceed desktop size
+			// this also includes the title bar and edges, but we want the client area to
+			// match the requested video mode, thus the handler override
+			{
+				int style;
+				int x, y, w, h;
+				MINMAXINFO *info = (MINMAXINFO *)lParam;
+				RECT r;
+
+				r.left = 0;
+				r.top = 0;
+				r.right = VID_GetWindowWidth();
+				r.bottom = VID_GetWindowHeight();
+
+				if( r.right == 0 || r.bottom == 0 ) {
+					// dummy startup window
+					break;
+				}
+
+				style = GetWindowLong( hWnd, GWL_STYLE );
+				AdjustWindowRectEx( &r, style, FALSE, 0 );
+
+				w = r.right - r.left;
+				h = r.bottom - r.top;
+
+				// get current window position
+				GetWindowRect( hWnd, &r );
+				x = r.left;
+				y = r.top;
+
+				info->ptMaxSize.x = w;
+				info->ptMaxSize.y = h;
+				info->ptMaxPosition.x = x;
+				info->ptMaxPosition.y = y;
+				info->ptMinTrackSize.x = w;
+				info->ptMinTrackSize.y = h;
+				info->ptMaxTrackSize.x = w;
+				info->ptMaxTrackSize.y = h;
+				return 0;
+			}
+			break;
 
 		case WM_SYSCOMMAND:
 			if( wParam == SC_SCREENSAVE ) {
@@ -521,7 +552,7 @@ rserr_t VID_Sys_Init( const char *applicationName, const char *screenshotsPrefix
 					  const int *iconXPM, void *parentWindow, bool verbose ) {
 	return re.Init( applicationName, screenshotsPrefix, startupColor,
 					IDI_APPICON_VALUE, iconXPM,
-					global_hInstance, MainWndProc, parentWindow,
+					global_hInstance, (void *)&MainWndProc, parentWindow,
 					verbose );
 }
 
@@ -539,12 +570,14 @@ void VID_UpdateWindowPosAndSize( int x, int y ) {
 	r.bottom = VID_GetWindowHeight();
 
 	style = GetWindowLong( cl_hwnd, GWL_STYLE );
-	AdjustWindowRect( &r, style, FALSE );
+	AdjustWindowRectEx( &r, style, FALSE, 0 );
 
+	x = x + r.left;
+	y = y + r.top;
 	w = r.right - r.left;
 	h = r.bottom - r.top;
 
-	MoveWindow( cl_hwnd, x, y, w, h, TRUE );
+	SetWindowPos( cl_hwnd, NULL, x, y, w, h, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOSENDCHANGING );
 }
 
 /*

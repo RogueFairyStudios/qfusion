@@ -29,7 +29,7 @@ cvar_t *vid_fullscreen;
 static bool GLimp_InitGL( int stencilbits, bool stereo );
 
 void GLimp_SetWindowIcon( void ) {
-#ifndef __APPLE__
+#if !(defined __APPLE__ || defined __OpenBSD__)
 	const int *xpm_icon = glw_state.applicationIcon;
 
 	if( xpm_icon ) {
@@ -49,19 +49,22 @@ void GLimp_SetWindowIcon( void ) {
 #endif
 }
 
-rserr_t GLimp_SetFullscreenMode( int displayFrequency, bool fullscreen ) {
+rserr_t GLimp_SetFullscreen( bool fullscreen, int xpos, int ypos ) {
 	Uint32 flags = 0;
 	bool borderless = glConfig.borderless;
 
 	if( fullscreen ) {
+		xpos = ypos = 0;
 		flags = SDL_WINDOW_FULLSCREEN;
-	}
-	if( borderless ) {
-		// we need to use SDL_WINDOW_FULLSCREEN_DESKTOP to support Alt+Tab from fullscreen on OS X
-		flags = SDL_WINDOW_FULLSCREEN_DESKTOP;
+
+		if( borderless ) {
+			// we need to use SDL_WINDOW_FULLSCREEN_DESKTOP to support Alt+Tab from fullscreen on OS X
+			flags = SDL_WINDOW_FULLSCREEN_DESKTOP;
+		}
 	}
 
 	if( SDL_SetWindowFullscreen( glw_state.sdl_window, flags ) == 0 ) {
+		SDL_SetWindowPosition( glw_state.sdl_window, xpos, ypos );
 		glConfig.fullScreen = fullscreen;
 		return rserr_ok;
 	}
@@ -94,7 +97,7 @@ static void GLimp_CreateWindow( int x, int y, int width, int height ) {
  * @param fullscreen <code>true</code> for a fullscreen mode,
  *     <code>false</code> otherwise
  */
-rserr_t GLimp_SetMode( int x, int y, int width, int height, int displayFrequency, bool fullscreen, bool stereo, bool borderless ) {
+rserr_t GLimp_SetMode( int x, int y, int width, int height, bool fullscreen, bool stereo, bool borderless ) {
 	const char *win_fs[] = {"W", "FS"};
 
 #ifdef __APPLE__
@@ -125,20 +128,15 @@ rserr_t GLimp_SetMode( int x, int y, int width, int height, int displayFrequency
 	glConfig.width = width;
 	glConfig.height = height;
 	glConfig.borderless = borderless;
-	glConfig.fullScreen = fullscreen;
-	if( GLimp_SetFullscreenMode( displayFrequency, fullscreen ) == rserr_ok ) {
-		glConfig.fullScreen = fullscreen;
-	} else {
-		glConfig.fullScreen = !fullscreen;
-	}
-
-	return glConfig.fullScreen == fullscreen ? rserr_ok : rserr_invalid_fullscreen;
+	glConfig.fullScreen = false;
+	return GLimp_SetFullscreen( fullscreen, x, y );
 }
 
 /**
  * Shutdown GLimp sub system.
  */
 void GLimp_Shutdown() {
+	SDL_GL_DeleteContext( glw_state.sdl_glcontext );
 	SDL_DestroyWindow( glw_state.sdl_window );
 
 	free( glw_state.applicationName );
@@ -158,7 +156,7 @@ void GLimp_Shutdown() {
 
 bool GLimp_Init( const char *applicationName, void *hinstance, void *wndproc, void *parenthWnd,
 				 int iconResource, const int *iconXPM ) {
-	glw_state.wndproc = wndproc;
+	*(void **)&glw_state.wndproc = wndproc;
 	glw_state.applicationName = strdup( applicationName );
 	glw_state.applicationIcon = NULL;
 	memcpy( glw_state.applicationName, applicationName, strlen( applicationName ) + 1 );
@@ -174,6 +172,7 @@ bool GLimp_Init( const char *applicationName, void *hinstance, void *wndproc, vo
 
 static bool GLimp_InitGL( int stencilbits, bool stereo ) {
 	int colorBits, depthBits, stencilBits, stereo_;
+	SDL_GLContext sdl_glcontext = 0;
 
 	SDL_GL_SetAttribute( SDL_GL_STENCIL_SIZE, max( 0, stencilbits ) );
 
@@ -182,13 +181,13 @@ static bool GLimp_InitGL( int stencilbits, bool stereo ) {
 		SDL_GL_SetAttribute( SDL_GL_STEREO, 1 );
 	}
 
-	glw_state.sdl_glcontext = SDL_GL_CreateContext( glw_state.sdl_window );
-	if( glw_state.sdl_glcontext == 0 ) {
+	sdl_glcontext = SDL_GL_CreateContext( glw_state.sdl_window );
+	if( sdl_glcontext == 0 ) {
 		ri.Com_Printf( "GLimp_Init() - SDL_GL_CreateContext failed: \"%s\"\n", SDL_GetError() );
 		goto fail;
 	}
 
-	if( SDL_GL_MakeCurrent( glw_state.sdl_window, glw_state.sdl_glcontext ) ) {
+	if( SDL_GL_MakeCurrent( glw_state.sdl_window, sdl_glcontext ) ) {
 		ri.Com_Printf( "GLimp_Init() - SDL_GL_MakeCurrent failed: \"%s\"\n", SDL_GetError() );
 		goto fail;
 	}
@@ -206,9 +205,15 @@ static bool GLimp_InitGL( int stencilbits, bool stereo ) {
 
 	ri.Com_Printf( "GL PFD: color(%d-bits) Z(%d-bit) stencil(%d-bits)\n", colorBits, depthBits, stencilBits );
 
+	glw_state.sdl_glcontext = sdl_glcontext;
 	return true;
 
 fail:
+	if( sdl_glcontext ) {
+		SDL_GL_DeleteContext( glw_state.sdl_glcontext );
+		sdl_glcontext = 0;
+	}
+
 	return false;
 }
 

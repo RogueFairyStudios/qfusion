@@ -366,8 +366,8 @@ static bool CG_ParseAnimationScript( pmodelinfo_t *pmodelinfo, char *filename ) 
 		cgs_skeleton_t *skel;
 		skel = CG_SkeletonForModel( pmodelinfo->model );
 		for( i = 0; i < counter; ++i ) {
-			clamp( pmodelinfo->animSet.firstframe[i], 0, skel->numFrames - 1 );
-			clamp( pmodelinfo->animSet.lastframe[i], 0, skel->numFrames - 1 );
+			Q_clamp( pmodelinfo->animSet.firstframe[i], 0, skel->numFrames - 1 );
+			Q_clamp( pmodelinfo->animSet.lastframe[i], 0, skel->numFrames - 1 );
 		}
 	}
 
@@ -591,7 +591,7 @@ static void CG_AddRaceGhostShell( entity_t *ent ) {
 	entity_t shell;
 	float alpha = cg_raceGhostsAlpha->value;
 
-	clamp( alpha, 0, 1.0 );
+	Q_clamp( alpha, 0, 1.0 );
 
 	shell = *ent;
 	shell.customSkin = NULL;
@@ -600,7 +600,7 @@ static void CG_AddRaceGhostShell( entity_t *ent ) {
 		return;
 	}
 
-	shell.customShader = CG_MediaShader( cgs.media.shaderRaceGhostEffect );
+	shell.customShader = cgs.media.shaderRaceGhostEffect;
 	shell.renderfx |= ( RF_FULLBRIGHT | RF_NOSHADOW );
 	shell.outlineHeight = 0;
 
@@ -808,14 +808,14 @@ static void CG_AddHeadIcon( centity_t *cent ) {
 	}
 
 	if( cent->effects & EF_BUSYICON ) {
-		iconShader = CG_MediaShader( cgs.media.shaderChatBalloon );
+		iconShader = cgs.media.shaderChatBalloon;
 		radius = 12;
 		upoffset = 2;
 	} else if( cent->localEffects[LOCALEFFECT_VSAY_HEADICON_TIMEOUT] > cg.time ) {
 		if( cent->localEffects[LOCALEFFECT_VSAY_HEADICON] < VSAY_TOTAL ) {
-			iconShader = CG_MediaShader( cgs.media.shaderVSayIcon[cent->localEffects[LOCALEFFECT_VSAY_HEADICON]] );
+			iconShader = cgs.media.shaderVSayIcon[cent->localEffects[LOCALEFFECT_VSAY_HEADICON]];
 		} else {
-			iconShader = CG_MediaShader( cgs.media.shaderVSayIcon[VSAY_GENERIC] );
+			iconShader = cgs.media.shaderVSayIcon[VSAY_GENERIC];
 		}
 
 		radius = 12;
@@ -863,7 +863,7 @@ static void CG_AddHeadIcon( centity_t *cent ) {
 			balloon.rtype = RT_MODEL;
 			balloon.customShader = NULL;
 			balloon.radius = 0;
-			balloon.model = CG_MediaModel( cgs.media.modHeadStun );
+			balloon.model = cgs.media.modHeadStun;
 
 			if( !( cent->current.effects & EF_PLAYER_STUNNED ) ) {
 				balloon.shaderRGBA[3] = ( 255 * ( 1.0f - cg.lerpfrac ) );
@@ -936,14 +936,14 @@ void CG_PModel_LeanAngles( centity_t *cent, pmodel_t *pmodel ) {
 			leanAngles[HEAD][ROLL] += side * 0.25;
 		}
 
-		clamp( leanAngles[LOWER][PITCH], -45, 45 );
-		clamp( leanAngles[LOWER][ROLL], -15, 15 );
+		Q_clamp( leanAngles[LOWER][PITCH], -45, 45 );
+		Q_clamp( leanAngles[LOWER][ROLL], -15, 15 );
 
-		clamp( leanAngles[UPPER][PITCH], -45, 45 );
-		clamp( leanAngles[UPPER][ROLL], -20, 20 );
+		Q_clamp( leanAngles[UPPER][PITCH], -45, 45 );
+		Q_clamp( leanAngles[UPPER][ROLL], -20, 20 );
 
-		clamp( leanAngles[HEAD][PITCH], -45, 45 );
-		clamp( leanAngles[HEAD][ROLL], -20, 20 );
+		Q_clamp( leanAngles[HEAD][PITCH], -45, 45 );
+		Q_clamp( leanAngles[HEAD][ROLL], -20, 20 );
 	}
 
 	for( j = LOWER; j < PMODEL_PARTS; j++ ) {
@@ -960,8 +960,10 @@ void CG_PModel_LeanAngles( centity_t *cent, pmodel_t *pmodel ) {
 * can be detected as groundentities by the animation checks
 */
 void CG_UpdatePModelAnimations( centity_t *cent ) {
-	int newanim[PMODEL_PARTS];
+	int i;
+	int newanim[PMODEL_PARTS], lastanim[PMODEL_PARTS];
 	int frame;
+	int lastframe;
 
 	cent->pendingAnimationsUpdate = false;
 
@@ -970,12 +972,16 @@ void CG_UpdatePModelAnimations( centity_t *cent ) {
 	} else {
 		frame = GS_UpdateBaseAnims( &cent->current, cent->animVelocity );
 	}
+	lastframe = cent->lastAnims;
+	cent->lastAnims = frame;
+
+	GS_DecodeAnimState( frame, newanim[LOWER], newanim[UPPER], newanim[HEAD] );
+	GS_DecodeAnimState( lastframe, lastanim[LOWER], lastanim[UPPER], lastanim[HEAD] );
 
 	// filter unchanged animations
-	newanim[LOWER] = ( frame & 0x3F ) * ( ( frame & 0x3F ) != ( cent->lastAnims & 0x3F ) );
-	newanim[UPPER] = ( frame >> 6 & 0x3F ) * ( ( frame >> 6 & 0x3F ) != ( cent->lastAnims >> 6 & 0x3F ) );
-	newanim[HEAD] = ( frame >> 12 & 0xF ) * ( ( frame >> 12 & 0xF ) != ( cent->lastAnims >> 12 & 0xF ) );
-	cent->lastAnims = frame;
+	for( i = LOWER; i <= HEAD; i++ ) {
+		newanim[i] *= newanim[i] != lastanim[i];
+	}
 
 	CG_PModel_AddAnimation( cent->current.number, newanim[LOWER], newanim[UPPER], newanim[HEAD], BASE_CHANNEL );
 }
@@ -1034,7 +1040,7 @@ void CG_UpdatePlayerModelEnt( centity_t *cent ) {
 	for( i = LOWER; i < PMODEL_PARTS; i++ )
 		VectorCopy( pmodel->angles[i], pmodel->oldangles[i] );
 
-	if( cent->current.type == ET_CORPSE ) {
+	if( cent->current.type == ET_CORPSE || cent->current.type == ET_MONSTER_CORPSE ) {
 		VectorClear( cent->animVelocity );
 		cent->yawVelocity = 0;
 	} else {
@@ -1044,7 +1050,7 @@ void CG_UpdatePlayerModelEnt( centity_t *cent ) {
 
 		// rotational yaw velocity
 		adelta = AngleDelta( cent->current.angles[YAW], cent->prev.angles[YAW] );
-		clamp( adelta, -35, 35 );
+		Q_clamp( adelta, -35, 35 );
 
 		// smooth a velocity vector between the last snaps
 		cent->lastVelocities[cg.frame.serverFrame & 3][0] = cent->velocity[0];

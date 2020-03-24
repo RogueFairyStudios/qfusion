@@ -23,7 +23,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "../gameshared/q_math.h"
 #include "../gameshared/q_shared.h"
 #include "../gameshared/q_cvar.h"
-#include "../gameshared/q_dynvar.h"
 #include "../gameshared/q_comref.h"
 #include "../gameshared/q_collision.h"
 
@@ -79,6 +78,14 @@ typedef enum {
 #define DEAD_DEAD       2
 #define DEAD_RESPAWNABLE    3
 
+// range
+#define RANGE_MELEE				0
+#define RANGE_NEAR				1
+#define RANGE_MID				2
+#define RANGE_FAR				3
+
+#define MELEE_DISTANCE	80
+
 // monster ai flags
 #define AI_STAND_GROUND     0x00000001
 #define AI_TEMP_STAND_GROUND    0x00000002
@@ -95,6 +102,12 @@ typedef enum {
 #define AI_COMBAT_POINT     0x00001000
 #define AI_MEDIC        0x00002000
 #define AI_RESURRECTING     0x00004000
+
+// monster attack state
+#define AS_STRAIGHT				1
+#define AS_SLIDING				2
+#define	AS_MELEE				3
+#define	AS_MISSILE				4
 
 // game.serverflags values
 #define SFL_CROSS_TRIGGER_1 0x00000001
@@ -127,7 +140,8 @@ typedef enum {
 	MOVETYPE_LINEARPROJECTILE, // extra size to monsters
 	MOVETYPE_BOUNCE,
 	MOVETYPE_BOUNCEGRENADE,
-	MOVETYPE_TOSSSLIDE
+	MOVETYPE_TOSSSLIDE,
+	MOVETYPE_STEP
 } movetype_t;
 
 //
@@ -153,13 +167,20 @@ typedef struct {
 	int serverflags;
 
 	// AngelScript engine object
+	struct angelwrap_api_s *asExport;
 	void *asEngine;
-	bool asGlobalsInitialized;
+
+	struct {
+		void *loadFunc;
+		void *pmoveFunc;
+		void *vaClampFunc;
+	} pmovescript;
 
 	unsigned int frametime;         // in milliseconds
 	int snapFrameTime;              // in milliseconds
 	int64_t realtime;				// actual time, set with Sys_Milliseconds every frame
-	int64_t serverTime;				// actual time in the server
+	int64_t serverTime;				// actual time on the server
+	int64_t prevServerTime;			// old time on the server
 
 	time_t localTime;               // local time in milliseconds
 
@@ -231,7 +252,16 @@ typedef struct {
 	edict_t *spawning_entity;   // entity being spawned from G_InitLevel
 	int body_que;               // dead bodies
 
-	edict_t *think_client_entity;// cycles between connected clients each frame
+	edict_t *think_client_entity; // cycles between connected clients each frame
+
+	edict_t		*sight_client;	// changed once each frame for coop games
+
+	edict_t		*sight_entity;
+	unsigned	sight_entity_framenum;
+	edict_t		*sound_entity;
+	unsigned	sound_entity_framenum;
+	edict_t		*sound2_entity;
+	unsigned	sound2_entity_framenum;
 
 	int numCheckpoints;
 	int numLocations;
@@ -240,6 +270,7 @@ typedef struct {
 	float gravity;
 
 	int colorCorrection;
+	int skillLevel;
 } level_locals_t;
 
 
@@ -504,6 +535,11 @@ const char *G_asCallMapGametype( void );
 
 bool G_asCallMapEntitySpawnScript( const char *classname, edict_t *ent );
 
+bool G_asLoadPMoveScript( void );
+void G_asShutdownPMoveScript( void );
+void G_asCallPMovePMove( pmove_t *pmove, player_state_t *ps, usercmd_t *cmd );
+void G_asCallPMoveGetViewAnglesClamp( const player_state_t *ps, vec3_t vaclamp );
+
 void G_asInitGameModuleEngine( void );
 void G_asShutdownGameModuleEngine( void );
 void G_asGarbageCollect( bool force );
@@ -584,6 +620,13 @@ bool Add_Armor( edict_t *ent, edict_t *other, bool pick_it );
 // g_utils.c
 //
 #define G_LEVELPOOL_BASE_SIZE   45 * 1024 * 1024
+
+// noise types for G_PlayerNoise
+enum {
+	PNOISE_SELF,
+	PNOISE_WEAPON,
+	PNOISE_IMPACT
+};
 
 bool KillBox( edict_t *ent );
 float LookAtKillerYAW( edict_t *self, edict_t *inflictor, edict_t *attacker );
@@ -669,7 +712,6 @@ void G_TeleportEffect( edict_t *ent, bool in );
 void G_RespawnEffect( edict_t *ent );
 bool G_Visible( edict_t *self, edict_t *other );
 bool G_InFront( edict_t *self, edict_t *other );
-bool G_EntNotBlocked( edict_t *viewer, edict_t *targ );
 void G_DropToFloor( edict_t *ent );
 int G_SolidMaskForEnt( edict_t *ent );
 void G_CheckGround( edict_t *ent );
@@ -693,6 +735,8 @@ int G_MapLocationTAGForOrigin( const vec3_t origin );
 void G_MapLocationNameForTAG( int tag, char *buf, size_t buflen );
 
 void G_SetBoundsForSpanEntity( edict_t *ent, vec_t size );
+
+void G_PlayerNoise( edict_t *who, vec3_t where, int type );
 
 //
 // g_callvotes.c
@@ -741,14 +785,14 @@ int G_PointContents4D( vec3_t p, int timeDelta );
 void G_Trace4D( trace_t *tr, vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, edict_t *passedict, int contentmask, int timeDelta );
 void GClip_BackUpCollisionFrame( void );
 int GClip_FindInRadius4D( vec3_t org, float rad, int *list, int maxcount, int timeDelta );
-void G_SplashFrac4D( int entNum, vec3_t hitpoint, float maxradius, vec3_t pushdir, float *kickFrac, float *dmgFrac, int timeDelta );
+float G_SplashFrac4D( int entNum, vec3_t hitpoint, float maxradius, vec3_t pushdir, bool viewPointForCenter, int timeDelta );
 void GClip_ClearWorld( void );
 void GClip_SetBrushModel( edict_t *ent, const char *name );
 void GClip_SetAreaPortalState( edict_t *ent, bool open );
 void GClip_LinkEntity( edict_t *ent );
 void GClip_UnlinkEntity( edict_t *ent );
 void GClip_TouchTriggers( edict_t *ent );
-void G_PMoveTouchTriggers( pmove_t *pm, vec3_t previous_origin );
+void G_PMoveTouchTriggers( pmove_t *pm, player_state_t *ps, vec3_t previous_origin );
 entity_state_t *G_GetEntityStateForDeltaTime( int entNum, int deltaTime );
 int GClip_FindInRadius( vec3_t org, float rad, int *list, int maxcount );
 
@@ -765,8 +809,7 @@ bool GClip_EntityContact( vec3_t mins, vec3_t maxs, edict_t *ent );
 //
 void G_Killed( edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage, const vec3_t point, int mod );
 int G_ModToAmmo( int mod );
-bool CheckTeamDamage( edict_t *targ, edict_t *attacker );
-void G_SplashFrac( const vec3_t origin, const vec3_t mins, const vec3_t maxs, const vec3_t point, float maxradius, vec3_t pushdir, float *kickFrac, float *dmgFrac );
+float G_SplashFrac( const vec3_t origin, const vec3_t mins, const vec3_t maxs, const vec3_t center, const vec3_t point, float maxradius, vec3_t pushdir );
 void G_Damage( edict_t *targ, edict_t *inflictor, edict_t *attacker, const vec3_t pushdir, const vec3_t dmgdir, const vec3_t point, float damage, float knockback, float stun, int dflags, int mod );
 void G_RadiusDamage( edict_t *inflictor, edict_t *attacker, cplane_t *plane, edict_t *ignore, int mod );
 
@@ -781,6 +824,20 @@ void G_RadiusDamage( edict_t *inflictor, edict_t *attacker, cplane_t *plane, edi
 
 #define GIB_HEALTH      -40
 
+//
+// g_monster.c
+//
+void M_droptofloor (edict_t *ent);
+void monster_think (edict_t *self);
+void walkmonster_start (edict_t *self);
+void swimmonster_start (edict_t *self);
+void flymonster_start (edict_t *self);
+void AttackFinished (edict_t *self, unsigned time);
+void monster_death_use (edict_t *self);
+void M_CategorizePosition (edict_t *ent);
+bool M_CheckAttack (edict_t *self);
+void M_CheckGround (edict_t *ent);
+void M_ReactToDamage (edict_t *targ, edict_t *attacker);
 
 //
 // g_misc.c
@@ -806,29 +863,51 @@ void SP_misc_particles( edict_t *ent );
 void SP_misc_video_speaker( edict_t *ent );
 
 //
+// g_ai.c
+//
+void AI_SetSightClient (void);
+
+void ai_stand (edict_t *self, float dist);
+void ai_move (edict_t *self, float dist);
+void ai_walk (edict_t *self, float dist);
+void ai_turn (edict_t *self, float dist);
+void ai_run (edict_t *self, float dist);
+void ai_charge (edict_t *self, float dist);
+int range (edict_t *self, edict_t *other);
+
+void FoundTarget (edict_t *self);
+bool FacingIdeal(edict_t *self);
+
+//
 // g_weapon.c
 //
 void ThrowDebris( edict_t *self, int modelindex, float speed, vec3_t origin );
-bool fire_hit( edict_t *self, vec3_t aim, int damage, int kick );
 void G_HideLaser( edict_t *ent );
 
-void W_Fire_Blade( edict_t *self, int range, vec3_t start, vec3_t angles, float damage, int knockback, int stun, int mod, int timeDelta );
-void W_Fire_Bullet( edict_t *self, vec3_t start, vec3_t angles, int seed, int range, int hspread, int vspread, float damage, int knockback, int stun, int mod, int timeDelta );
-edict_t *W_Fire_GunbladeBlast( edict_t *self, vec3_t start, vec3_t angles, float damage, int minKnockback, int maxKnockback, int stun, int minDamage, int radius, int speed, int timeout, int mod, int timeDelta );
-void W_Fire_Riotgun( edict_t *self, vec3_t start, vec3_t angles, int seed, int range, int hspread, int vspread, int count, float damage, int knockback, int stun, int mod, int timeDelta );
-edict_t *W_Fire_Grenade( edict_t *self, vec3_t start, vec3_t angles, int speed, float damage, int minKnockback, int maxKnockback, int stun, int minDamage, float radius, int timeout, int mod, int timeDelta, bool aim_up );
-edict_t *W_Fire_Rocket( edict_t *self, vec3_t start, vec3_t angles, int speed, float damage, int minKnockback, int maxKnockback, int stun, int minDamage, int radius, int timeout, int mod, int timeDelta );
-edict_t *W_Fire_Plasma( edict_t *self, vec3_t start, vec3_t angles, float damage, int minKnockback, int maxKnockback, int stun, int minDamage, int radius, int speed, int timeout, int mod, int timeDelta );
-void W_Fire_Electrobolt_FullInstant( edict_t *self, vec3_t start, vec3_t angles, float maxdamage, float mindamage, int maxknockback, int minknockback, int stun, int range, int minDamageRange, int mod, int timeDelta );
-void W_Fire_Electrobolt_Combined( edict_t *self, vec3_t start, vec3_t angles, float maxdamage, float mindamage, float maxknockback, float minknockback, int stun, int range, int mod, int timeDelta );
-edict_t *W_Fire_Electrobolt_Weak( edict_t *self, vec3_t start, vec3_t angles, float speed, float damage, int minKnockback, int maxKnockback, int stun, int timeout, int mod, int timeDelta );
-edict_t *W_Fire_Lasergun( edict_t *self, vec3_t start, vec3_t angles, float damage, int knockback, int stun, int timeout, int mod, int timeDelta );
-edict_t *W_Fire_Lasergun_Weak( edict_t *self, vec3_t start, vec3_t end, float damage, int knockback, int stun, int timeout, int mod, int timeDelta );
-void W_Fire_Instagun( edict_t *self, vec3_t start, vec3_t angles, float damage, int knockback, int stun, int radius, int range, int mod, int timeDelta );
+void W_Fire_Blade( edict_t *self, int range, vec3_t start, vec3_t dir, float damage, int knockback, int stun, int mod, int timeDelta );
+void W_Fire_Bullet( edict_t *self, vec3_t start, vec3_t fv, vec3_t rv, vec3_t uv, int seed, int range, int hspread, int vspread, float damage, int knockback, int stun, int mod, int timeDelta );
+edict_t *W_Fire_GunbladeBlast( edict_t *self, vec3_t start, vec3_t dir, float damage, float selfDamage, int minKnockback, int maxKnockback, int stun, int minDamage, int radius, int speed, int timeout, int mod, int timeDelta );
+void W_Fire_SunflowerBucket( edict_t *self, vec3_t start, vec3_t fv, vec3_t rv, vec3_t uv, int *seed, int count, int hspread, int vspread, int range, float damage, int kick, int stun, int dflags, int mod, int timeDelta );
+void W_Fire_RandomBucket( edict_t *self, vec3_t start, vec3_t fv, vec3_t rv, vec3_t uv, int *seed, int count, int hspread, int vspread, int range, float damage, int kick, int stun, int dflags, int mod, int timeDelta );
+void W_Fire_Riotgun( edict_t *self, vec3_t start, vec3_t fv, vec3_t rv, vec3_t uv, int seed, int range, int hspread, int vspread, int count, float damage, int knockback, int stun, int mod, int timeDelta );
+edict_t *W_Fire_Grenade( edict_t *self, vec3_t start, vec3_t dir, int speed, float damage, float selfDamage, int minKnockback, int maxKnockback, int stun, int minDamage, float radius, int timeout, int mod, int timeDelta );
+edict_t *W_Fire_Rocket( edict_t *self, vec3_t start, vec3_t dir, int speed, float damage, float selfDamage, int minKnockback, int maxKnockback, int stun, int minDamage, int radius, int timeout, int mod, int timeDelta );
+edict_t *W_Fire_Plasma( edict_t *self, vec3_t start, vec3_t dir, float damage, float selfDamage, int minKnockback, int maxKnockback, int stun, int minDamage, int radius, int speed, int timeout, int mod, int timeDelta );
+void W_Fire_Electrobolt_FullInstant( edict_t *self, vec3_t start, vec3_t dir, float maxdamage, float mindamage, int maxknockback, int minknockback, int stun, int range, int minDamageRange, int mod, int timeDelta );
+void W_Fire_Electrobolt_Combined( edict_t *self, vec3_t start, vec3_t dir, float maxdamage, float mindamage, float maxknockback, float minknockback, int stun, int range, int mod, int timeDelta );
+edict_t *W_Fire_Electrobolt_Weak( edict_t *self, vec3_t start, vec3_t dir, float speed, float damage, int minKnockback, int maxKnockback, int stun, int timeout, int mod, int timeDelta );
+edict_t	*W_Fire_Lasergun( edict_t *self, vec3_t start, vec3_t dir, float damage, int knockback, int stun, int timeout, int mod, int timeDelta );
+edict_t	*W_Fire_Lasergun_Weak( edict_t *self, vec3_t dir, vec3_t end, float damage, int knockback, int stun, int timeout, int mod, int timeDelta );
+void W_Fire_Instagun( edict_t *self, vec3_t start, vec3_t dir, float damage, int knockback, int stun, int radius, int range, int mod, int timeDelta );
 
 bool Pickup_Weapon( edict_t *other, const gsitem_t *item, int flags, int ammo_count );
 edict_t *Drop_Weapon( edict_t *ent, const gsitem_t *item );
 void Use_Weapon( edict_t *ent, const gsitem_t *item );
+
+//
+// m_soldier.c
+//
+void SP_monster_soldier( edict_t *self );
 
 //
 // g_chasecam	//newgametypes
@@ -851,12 +930,10 @@ void G_Client_InactivityRemove( gclient_t *client );
 void G_ClientRespawn( edict_t *self, bool ghost );
 void G_ClientClearStats( edict_t *ent );
 void G_GhostClient( edict_t *self );
-void G_MoveClientToTV( edict_t *ent );
-bool ClientMultiviewChanged( edict_t *ent, bool multiview );
 void ClientThink( edict_t *ent, usercmd_t *cmd, int timeDelta );
 void G_ClientThink( edict_t *ent );
 void G_CheckClientRespawnClick( edict_t *ent );
-bool ClientConnect( edict_t *ent, char *userinfo, bool fakeClient, bool tvClient );
+bool ClientConnect( edict_t *ent, char *userinfo, bool fakeClient );
 void ClientDisconnect( edict_t *ent, const char *reason );
 void ClientBegin( edict_t *ent );
 void ClientCommand( edict_t *ent );
@@ -1005,9 +1082,27 @@ void G_DeathAwards( edict_t *ent );
  */
 void G_AwardFairPlay( edict_t *ent );
 
+//
+// m_move.c
+//
+bool M_CheckBottom (edict_t *ent);
+bool M_walkmove (edict_t *ent, float yaw, float dist);
+void M_MoveToGoal (edict_t *ent, float dist);
+void M_ChangeYaw (edict_t *ent);
+
+//
+// g_ptrail.c
+//
+void G_PlayerTrail_Init (void);
+void G_PlayerTrail_Add (vec3_t spot);
+void G_PlayerTrail_New (vec3_t spot);
+edict_t *G_PlayerTrail_PickFirst (edict_t *self);
+edict_t *G_PlayerTrail_PickNext (edict_t *self);
+edict_t	*G_PlayerTrail_LastSpot (void);
+
 //============================================================================
 
-#include "ai/ai.h"
+#include "g_botai.h"
 
 typedef struct {
 	int radius;
@@ -1015,6 +1110,7 @@ typedef struct {
 	float maxDamage;
 	float minKnockback;
 	float maxKnockback;
+	float selfDamage;
 	int stun;
 } projectileinfo_t;
 
@@ -1059,6 +1155,49 @@ typedef struct {
 	vec3_t dest;
 	vec3_t destangles;
 } moveinfo_t;
+
+typedef struct {
+	void	(*aifunc)(edict_t *self, float dist);
+	float	dist;
+	void	(*thinkfunc)(edict_t *self);
+} mframe_t;
+
+typedef struct {
+	int		firstframe;
+	int		lastframe;
+	mframe_t	*frame;
+	void		(*endfunc)(edict_t *self);
+} mmove_t;
+
+typedef struct {
+	mmove_t		*currentmove;
+	int			aiflags;
+	int			nextframe;
+	float		scale;
+
+	void		(*stand)(edict_t *self);
+	void		(*idle)(edict_t *self);
+	void		(*search)(edict_t *self);
+	void		(*walk)(edict_t *self);
+	void		(*run)(edict_t *self);
+	void		(*dodge)(edict_t *self, edict_t *other, float eta);
+	void		(*attack)(edict_t *self);
+	void		(*melee)(edict_t *self);
+	void		(*sight)(edict_t *self, edict_t *other);
+	bool		(*checkattack)(edict_t *self);
+
+	int64_t		pausetime;
+	int64_t		attack_finished;
+
+	vec3_t		saved_goal;
+	int64_t		search_time;
+	int64_t		trail_time;
+	vec3_t		last_sighting;
+	int			attack_state;
+	int			lefty;
+	int64_t		idle_time;
+	int			linkcount;
+} monsterinfo_t;
 
 typedef struct {
 	int ebhit_count;
@@ -1152,7 +1291,7 @@ typedef struct {
 
 	int64_t callvote_when;
 
-	char quickMenuItems[1024];
+	char overlayMenuItems[1024];
 } client_levelreset_t;
 
 typedef struct {
@@ -1207,21 +1346,10 @@ struct gclient_s {
 	char ip[MAX_INFO_VALUE];
 	char socket[MAX_INFO_VALUE];
 
-	// port numbers reported by connected TV as part of userinfo
-	struct {
-		int port;
-		int port6;
-		int maxclients;
-		int numclients;
-		int channel;
-	} tv;
-
 	int mm_session;                 // 0 - invalid session, < 0 - local session, > 0 authenticated account
 	clientRating_t *ratings;        // list of ratings for gametypes
 
 	bool connecting;
-	bool multiview;
-	bool isTV;
 
 	byte_vec4_t color;
 	int team;
@@ -1333,7 +1461,9 @@ struct edict_s {
 	const char *killtarget;
 	const char *team;
 	const char *pathtarget;
-	edict_t *target_ent;
+	const char *deathtarget;
+	const char *combattarget;
+	edict_t	*target_ent;
 
 	vec3_t velocity;
 	vec3_t avelocity;
@@ -1362,13 +1492,19 @@ struct edict_s {
 	edict_t *goalentity;
 	edict_t *movetarget;
 	float yaw_speed;
+	float ideal_yaw;
 
+	int64_t touch_debounce_time;		// are all these legit?  do we need more/less of them?
 	int64_t pain_debounce_time;
+	int64_t damage_debounce_time;
+	int64_t last_move_time;
+	int64_t teleport_time;
 
 	float health;
 	int max_health;
 	int gib_health;
 	int deadflag;
+	unsigned show_hostile;
 
 	const char *map;			// target_changelevel
 
@@ -1409,6 +1545,7 @@ struct edict_s {
 
 	// common data blocks
 	moveinfo_t moveinfo;        // func movers movement
+	monsterinfo_t monsterinfo;
 
 	ai_handle_t *ai;
 	float aiIntrinsicEnemyWeight;
@@ -1425,6 +1562,9 @@ struct edict_s {
 
 	edict_t *trigger_entity;
 	int64_t trigger_timeout;
+
+	edict_t *mynoise;
+	edict_t *mynoise2;
 
 	bool linked;
 

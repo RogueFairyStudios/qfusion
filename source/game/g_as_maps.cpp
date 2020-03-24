@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2012 Chasseur de bots
+Copyright (C) 2019 Victor Luchits
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -84,11 +84,11 @@ static void G_asCallMapFunction( void *func ) {
 	int error;
 	asIScriptContext *ctx;
 
-	if( !func || !angelExport ) {
+	if( !func || !game.asExport ) {
 		return;
 	}
 
-	ctx = angelExport->asAcquireContext( GAME_AS_ENGINE() );
+	ctx = game.asExport->asAcquireContext( GAME_AS_ENGINE() );
 
 	error = ctx->Prepare( static_cast<asIScriptFunction *>( func ) );
 	if( error < 0 ) {
@@ -143,14 +143,14 @@ const char *G_asCallMapGametype( void ) {
 		return "";
 	}
 
-	ctx = angelExport->asAcquireContext( GAME_AS_ENGINE() );
+	ctx = game.asExport->asAcquireContext( GAME_AS_ENGINE() );
 
 	error = ctx->Prepare( static_cast<asIScriptFunction *>( level.mapscript.gametypeFunc ) );
 	if( error < 0 ) {
 		return "";
 	}
 
-	s = angelExport->asStringFactoryBuffer( g_gametype->string, strlen( g_gametype->string ) );
+	s = game.asExport->asStringFactoryBuffer( g_gametype->string, strlen( g_gametype->string ) );
 
 	ctx->SetArgObject( 0, s );
 

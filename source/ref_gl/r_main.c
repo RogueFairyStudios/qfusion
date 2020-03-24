@@ -31,6 +31,12 @@ refinst_t rn;
 
 r_scene_t rsc;
 
+const elem_t r_boxedges[24] = {
+	0, 1, 0, 2, 1, 3, 2, 3,
+	4, 5, 4, 6, 5, 7, 6, 7,
+	0, 4, 1, 5, 2, 6, 3, 7,
+};
+
 /*
 * R_TransformBounds
 */
@@ -68,14 +74,8 @@ void R_TransformForWorld( void ) {
 * R_TranslateForEntity
 */
 void R_TranslateForEntity( const entity_t *e ) {
-	Matrix4_Identity( rn.objectMatrix );
-
-	rn.objectMatrix[0] = e->scale;
-	rn.objectMatrix[5] = e->scale;
-	rn.objectMatrix[10] = e->scale;
-	rn.objectMatrix[12] = e->origin[0];
-	rn.objectMatrix[13] = e->origin[1];
-	rn.objectMatrix[14] = e->origin[2];
+	Matrix4_ObjectMatrix( e->origin, axis_identity, e->scale, rn.objectMatrix );
+	Matrix4_MultiplyFast( rn.cameraMatrix, rn.objectMatrix, rn.modelviewMatrix );
 
 	RB_LoadObjectMatrix( rn.objectMatrix );
 }
@@ -93,36 +93,7 @@ void R_TransformForEntity( const entity_t *e ) {
 		return;
 	}
 
-	if( e->scale != 1.0f ) {
-		rn.objectMatrix[0] = e->axis[0] * e->scale;
-		rn.objectMatrix[1] = e->axis[1] * e->scale;
-		rn.objectMatrix[2] = e->axis[2] * e->scale;
-		rn.objectMatrix[4] = e->axis[3] * e->scale;
-		rn.objectMatrix[5] = e->axis[4] * e->scale;
-		rn.objectMatrix[6] = e->axis[5] * e->scale;
-		rn.objectMatrix[8] = e->axis[6] * e->scale;
-		rn.objectMatrix[9] = e->axis[7] * e->scale;
-		rn.objectMatrix[10] = e->axis[8] * e->scale;
-	} else {
-		rn.objectMatrix[0] = e->axis[0];
-		rn.objectMatrix[1] = e->axis[1];
-		rn.objectMatrix[2] = e->axis[2];
-		rn.objectMatrix[4] = e->axis[3];
-		rn.objectMatrix[5] = e->axis[4];
-		rn.objectMatrix[6] = e->axis[5];
-		rn.objectMatrix[8] = e->axis[6];
-		rn.objectMatrix[9] = e->axis[7];
-		rn.objectMatrix[10] = e->axis[8];
-	}
-
-	rn.objectMatrix[3] = 0;
-	rn.objectMatrix[7] = 0;
-	rn.objectMatrix[11] = 0;
-	rn.objectMatrix[12] = e->origin[0];
-	rn.objectMatrix[13] = e->origin[1];
-	rn.objectMatrix[14] = e->origin[2];
-	rn.objectMatrix[15] = 1.0;
-
+	Matrix4_ObjectMatrix( e->origin, e->axis, e->scale, rn.objectMatrix );
 	Matrix4_MultiplyFast( rn.cameraMatrix, rn.objectMatrix, rn.modelviewMatrix );
 
 	RB_LoadObjectMatrix( rn.objectMatrix );
@@ -184,41 +155,25 @@ mfog_t *R_FogForSphere( const vec3_t centre, const float radius ) {
 }
 
 /*
-* R_CompletelyFogged
+* R_ComputeLOD
 */
-bool R_CompletelyFogged( const mfog_t *fog, vec3_t origin, float radius ) {
-	// note that fog->distanceToEye < 0 is always true if
-	// globalfog is not NULL and we're inside the world boundaries
-	if( fog && fog->shader && fog == rn.fog_eye ) {
-		float vpnDist = ( ( rn.viewOrigin[0] - origin[0] ) * rn.viewAxis[AXIS_FORWARD + 0] +
-						  ( rn.viewOrigin[1] - origin[1] ) * rn.viewAxis[AXIS_FORWARD + 1] +
-						  ( rn.viewOrigin[2] - origin[2] ) * rn.viewAxis[AXIS_FORWARD + 2] );
-		return ( ( vpnDist + radius ) / fog->shader->fog_dist ) < -1;
+int R_ComputeLOD( float dist, float lodDistance, float lodScale, int lodBias ) {
+	int lodi;
+	float lod;
+
+	if( lodDistance < 1.0f )
+		lodDistance = 1.0f;
+
+	//dist *= tan( DEG2RAD( rn.refdef.fov_x ) * 0.5f );
+
+	if( dist <= lodDistance ) {
+		lod = 0;
+	} else {
+		lod = sqrt( dist / lodDistance ) * lodScale;
 	}
 
-	return false;
-}
-
-/*
-* R_LODForSphere
-*/
-int R_LODForSphere( const vec3_t origin, float radius ) {
-	float dist;
-	int lod;
-
-	dist = DistanceFast( origin, rn.lodOrigin );
-	dist *= rn.lod_dist_scale_for_fov;
-
-	lod = (int)( dist / radius );
-	if( r_lodscale->integer ) {
-		lod /= r_lodscale->integer;
-	}
-	lod += r_lodbias->integer;
-
-	if( lod < 1 ) {
-		return 0;
-	}
-	return lod;
+	lodi = (int)( lod + 0.5f ) + lodBias;
+	return clamp_low( lodi, 0 );
 }
 
 /*
@@ -275,7 +230,8 @@ static drawSurfaceType_t spriteDrawSurf = ST_SPRITE;
 /*
 * R_BatchSpriteSurf
 */
-void R_BatchSpriteSurf( const entity_t *e, const shader_t *shader, const mfog_t *fog, const portalSurface_t *portalSurface, unsigned int shadowBits, drawSurfaceType_t *drawSurf ) {
+void R_BatchSpriteSurf( const entity_t *e, const shader_t *shader, const mfog_t *fog, int lightStyleNum, 
+	const portalSurface_t *portalSurface, drawSurfaceType_t *drawSurf, bool mergable ) {
 	int i;
 	vec3_t point;
 	vec3_t v_left, v_up;
@@ -325,7 +281,26 @@ void R_BatchSpriteSurf( const entity_t *e, const shader_t *shader, const mfog_t 
 	mesh.colorsArray[1] = NULL;
 	mesh.sVectorsArray = NULL;
 
-	RB_AddDynamicMesh( e, shader, fog, portalSurface, 0, &mesh, GL_TRIANGLES, 0.0f, 0.0f );
+	RB_AddDynamicMesh( e, shader, fog, portalSurface, &mesh, GL_TRIANGLES, 0.0f, 0.0f );
+}
+
+/*
+* R_CacheSpriteEntity
+*/
+void R_CacheSpriteEntity( const entity_t *e ) {
+	int i;
+	float corner;
+	entSceneCache_t *cache = R_ENTCACHE( e );
+
+	cache->rotated = true;
+	cache->radius = e->radius;
+	cache->fog = R_FogForSphere( e->origin, e->radius );
+
+	corner = e->radius * 1.74;
+	for( i = 0; i < 3; i++ ) {
+		cache->mins[i] = e->origin[i] - corner;
+		cache->maxs[i] = e->origin[i] + corner;
+	}
 }
 
 /*
@@ -333,27 +308,23 @@ void R_BatchSpriteSurf( const entity_t *e, const shader_t *shader, const mfog_t 
 */
 static bool R_AddSpriteToDrawList( const entity_t *e ) {
 	float dist;
-
-	if( e->flags & RF_NOSHADOW ) {
-		if( rn.renderFlags & RF_SHADOWMAPVIEW ) {
-			return false;
-		}
-	}
-
-	if( e->radius <= 0 || e->customShader == NULL || e->scale <= 0 ) {
-		return false;
-	}
+	const shader_t *shader = e->customShader;
 
 	dist =
 		( e->origin[0] - rn.refdef.vieworg[0] ) * rn.viewAxis[AXIS_FORWARD + 0] +
 		( e->origin[1] - rn.refdef.vieworg[1] ) * rn.viewAxis[AXIS_FORWARD + 1] +
 		( e->origin[2] - rn.refdef.vieworg[2] ) * rn.viewAxis[AXIS_FORWARD + 2];
+
 	if( dist <= 0 ) {
 		return false; // cull it because we don't want to sort unneeded things
-
 	}
-	if( !R_AddSurfToDrawList( rn.meshlist, e, R_FogForSphere( e->origin, e->radius ),
-							  e->customShader, dist, 0, NULL, &spriteDrawSurf ) ) {
+
+	if( ( rn.renderFlags & RF_SHADOWMAPVIEW ) && R_ShaderNoShadow( shader ) ) {
+		return false;
+	}
+
+	if( !R_AddSurfToDrawList( rn.meshlist, e, shader, 
+		R_FogForSphere( e->origin, e->radius ), -1, dist, 0, NULL, &spriteDrawSurf ) ) {
 		return false;
 	}
 
@@ -407,7 +378,7 @@ mesh_vbo_t *R_InitNullModelVBO( void ) {
 	mesh.numElems = 6;
 	mesh.elems = elems;
 
-	R_UploadVBOVertexData( vbo, 0, vattribs, &mesh );
+	R_UploadVBOVertexData( vbo, 0, vattribs, &mesh, 0 );
 	R_UploadVBOElemData( vbo, 0, 0, &mesh );
 
 	return vbo;
@@ -416,7 +387,8 @@ mesh_vbo_t *R_InitNullModelVBO( void ) {
 /*
 * R_DrawNullSurf
 */
-void R_DrawNullSurf( const entity_t *e, const shader_t *shader, const mfog_t *fog, const portalSurface_t *portalSurface, unsigned int shadowBits, drawSurfaceType_t *drawSurf ) {
+void R_DrawNullSurf( const entity_t *e, const shader_t *shader, const mfog_t *fog, int lightStyleNum, 
+	const portalSurface_t *portalSurface, drawSurfaceType_t *drawSurf ) {
 	assert( rsh.nullVBO != NULL );
 	if( !rsh.nullVBO ) {
 		return;
@@ -424,15 +396,19 @@ void R_DrawNullSurf( const entity_t *e, const shader_t *shader, const mfog_t *fo
 
 	RB_BindVBO( rsh.nullVBO->index, GL_LINES );
 
-	RB_DrawElements( 0, 6, 0, 6, 0, 0, 0, 0 );
+	RB_DrawElements( 0, 6, 0, 6 );
 }
 
 /*
 * R_AddNullSurfToDrawList
 */
 static bool R_AddNullSurfToDrawList( const entity_t *e ) {
-	if( !R_AddSurfToDrawList( rn.meshlist, e, R_FogForSphere( e->origin, 0.1f ),
-							  rsh.whiteShader, 0, 0, NULL, &nullDrawSurf ) ) {
+	if( rn.renderFlags & RF_SHADOWMAPVIEW ) {
+		return false;
+	}
+
+	if( !R_AddSurfToDrawList( rn.meshlist, e, rsh.whiteShader, 
+		R_FogForSphere( e->origin, 0.1f ), -1, 0, 0, NULL, &nullDrawSurf ) ) {
 		return false;
 	}
 
@@ -449,49 +425,91 @@ static elem_t pic_elems[6] = { 0, 1, 2, 0, 2, 3 };
 static mesh_t pic_mesh = { 4, 6, pic_elems, pic_xyz, pic_normals, NULL, pic_st, { 0, 0, 0, 0 }, { 0 }, { pic_colors, pic_colors, pic_colors, pic_colors }, NULL, NULL };
 
 /*
-* R_Set2DMode
+* R_Begin2D
 *
 * Note that this sets the viewport to size of the active framebuffer.
 */
-void R_Set2DMode( bool enable ) {
+void R_Begin2D( bool multiSamples ) {
 	int width, height;
 
 	width = rf.frameBufferWidth;
 	height = rf.frameBufferHeight;
 
-	if( rf.in2D == true && enable == true && width == rf.width2D && height == rf.height2D ) {
-		return;
-	} else if( rf.in2D == false && enable == false ) {
+	if( rf.twoD.enabled == true ) {
+		if( width == rf.twoD.width && height == rf.twoD.height && multiSamples == rf.twoD.multiSamples ) {
+			return;
+		}
+	}
+
+	RB_FlushDynamicMeshes();
+
+	if( multiSamples )
+		R_BindFrameBufferObject( rf.renderTarget );
+	else
+		R_BindFrameBufferObject( 0 );
+
+	rf.twoD.enabled = true;
+	rf.twoD.width = rf.frameBufferWidth;
+	rf.twoD.height = rf.frameBufferHeight;
+	rf.twoD.multiSamples = multiSamples;
+
+	RB_EnableTriangleOutlines( multiSamples && ( r_showtris2D->integer != 0 ) );
+
+	R_SetupGL2D();
+}
+
+/*
+* R_SetupGL2D
+*
+* Note that this sets the viewport to size of the active framebuffer.
+*/
+void R_SetupGL2D( void ) {
+	int width, height;
+	/*ATTRIBUTE_ALIGNED( 16 ) */mat4_t projectionMatrix;
+
+	width = rf.twoD.width;
+	height = rf.twoD.height;
+
+	Matrix4_OrthoProjection( 0, width, height, 0, -1, 1, projectionMatrix );
+
+	// set 2D virtual screen size
+	RB_Scissor( 0, 0, width, height );
+	RB_Viewport( 0, 0, width, height );
+
+	RB_SetZClip( Z_NEAR, 1024 );
+	RB_SetCamera( vec3_origin, axis_identity );
+
+	RB_LoadCameraMatrix( mat4x4_identity );
+
+	RB_LoadObjectMatrix( mat4x4_identity );
+
+	RB_LoadProjectionMatrix( projectionMatrix );
+
+	RB_SetShaderStateMask( ~0, GLSTATE_NO_DEPTH_TEST );
+
+	RB_SetRtLightParams( 0, NULL, 0, NULL );
+
+	RB_SetRenderFlags( 0 );
+}
+
+/*
+* R_End2D
+*/
+void R_End2D( void ) {
+	if( rf.twoD.enabled == false ) {
 		return;
 	}
 
-	rf.in2D = enable;
+	rf.twoD.enabled = false;
 
-	if( enable ) {
-		rf.width2D = width;
-		rf.height2D = height;
+	// render previously batched 2D geometry, if any
+	RB_FlushDynamicMeshes();
 
-		Matrix4_OrthogonalProjection( 0, width, height, 0, -99999, 99999, rn.projectionMatrix );
-		Matrix4_Copy( mat4x4_identity, rn.modelviewMatrix );
-		Matrix4_Copy( rn.projectionMatrix, rn.cameraProjectionMatrix );
+	RB_EnableTriangleOutlines( false );
 
-		// set 2D virtual screen size
-		RB_Scissor( 0, 0, width, height );
-		RB_Viewport( 0, 0, width, height );
+	RB_SetShaderStateMask( ~0, 0 );
 
-		RB_LoadProjectionMatrix( rn.projectionMatrix );
-		RB_LoadCameraMatrix( mat4x4_identity );
-		RB_LoadObjectMatrix( mat4x4_identity );
-
-		RB_SetShaderStateMask( ~0, GLSTATE_NO_DEPTH_TEST );
-
-		RB_SetRenderFlags( 0 );
-	} else {
-		// render previously batched 2D geometry, if any
-		RB_FlushDynamicMeshes();
-
-		RB_SetShaderStateMask( ~0, 0 );
-	}
+	RB_SetRenderFlags( 0 );
 }
 
 /*
@@ -513,10 +531,10 @@ void R_DrawRotatedStretchPic( int x, int y, int w, int h, float s1, float t1, fl
 	Vector2Set( pic_xyz[0], x, y );
 	Vector2Set( pic_st[0], s1, t1 );
 	Vector4Set( pic_colors[0],
-				bound( 0, ( int )( color[0] * 255.0f ), 255 ),
-				bound( 0, ( int )( color[1] * 255.0f ), 255 ),
-				bound( 0, ( int )( color[2] * 255.0f ), 255 ),
-				bound( 0, ( int )( color[3] * 255.0f ), 255 ) );
+				Q_bound( 0, ( int )( color[0] * 255.0f ), 255 ),
+				Q_bound( 0, ( int )( color[1] * 255.0f ), 255 ),
+				Q_bound( 0, ( int )( color[2] * 255.0f ), 255 ),
+				Q_bound( 0, ( int )( color[3] * 255.0f ), 255 ) );
 	bcolor = *(int *)pic_colors[0];
 
 	// lower-right
@@ -552,7 +570,7 @@ void R_DrawRotatedStretchPic( int x, int y, int w, int h, float s1, float t1, fl
 		}
 	}
 
-	RB_AddDynamicMesh( NULL, shader, NULL, NULL, 0, &pic_mesh, GL_TRIANGLES, 0.0f, 0.0f );
+	RB_AddDynamicMesh( NULL, shader, NULL, NULL, &pic_mesh, GL_TRIANGLES, 0.0f, 0.0f );
 }
 
 /*
@@ -679,8 +697,6 @@ void R_DrawStretchRawYUVBuiltin( int x, int y, int w, int h,
 	}
 
 	R_DrawRotatedStretchPic( x, y, w, h, s1, t1, s2, t2, 0, colorWhite, &s );
-
-	RB_FlushDynamicMeshes();
 }
 
 /*
@@ -733,9 +749,6 @@ void R_BindFrameBufferObject( int object ) {
 	rf.frameBufferHeight = height;
 
 	RB_BindFrameBufferObject( object );
-
-	RB_Viewport( rn.viewport[0], rn.viewport[1], rn.viewport[2], rn.viewport[3] );
-	RB_Scissor( rn.scissor[0], rn.scissor[1], rn.scissor[2], rn.scissor[3] );
 }
 
 /*
@@ -773,30 +786,8 @@ static void R_PolyBlend( void ) {
 		return;
 	}
 
-	R_Set2DMode( true );
 	R_DrawStretchPic( 0, 0, rf.frameBufferWidth, rf.frameBufferHeight, 0, 0, 1, 1, rsc.refdef.blend, rsh.whiteShader );
 	RB_FlushDynamicMeshes();
-}
-
-/*
-* R_ApplyBrightness
-*/
-static void R_ApplyBrightness( void ) {
-	float c;
-	vec4_t color;
-
-	c = r_brightness->value;
-	if( c < 0.005 ) {
-		return;
-	} else if( c > 1.0 ) {
-		c = 1.0;
-	}
-
-	color[0] = color[1] = color[2] = c, color[3] = 1;
-
-	R_Set2DMode( true );
-	R_DrawStretchQuick( 0, 0, rf.frameBufferWidth, rf.frameBufferHeight, 0, 0, 1, 1,
-						color, GLSL_PROGRAM_TYPE_NONE, rsh.whiteTexture, GLSTATE_SRCBLEND_ONE | GLSTATE_DSTBLEND_ONE );
 }
 
 /*
@@ -822,7 +813,7 @@ mesh_vbo_t *R_InitPostProcessingVBO( void ) {
 	mesh.numElems = 6;
 	mesh.elems = elems;
 
-	R_UploadVBOVertexData( vbo, 0, vattribs, &mesh );
+	R_UploadVBOVertexData( vbo, 0, vattribs, &mesh, 0 );
 	R_UploadVBOElemData( vbo, 0, 0, &mesh );
 
 	return vbo;
@@ -837,7 +828,7 @@ float R_DefaultFarClip( void ) {
 	float farclip_dist;
 
 	if( rn.renderFlags & RF_SHADOWMAPVIEW ) {
-		return rn.shadowGroup->projDist;
+		farclip_dist = 0;
 	} else if( rn.refdef.rdflags & RDF_NOWORLDMODEL ) {
 		farclip_dist = 1024;
 	} else if( rsh.worldModel && rsh.worldBrushModel->globalfog ) {
@@ -850,145 +841,160 @@ float R_DefaultFarClip( void ) {
 }
 
 /*
-* R_SetVisFarClip
+* R_SetupPVSFromCluster
 */
-static float R_SetVisFarClip( void ) {
-	int i;
-	float dist;
-	vec3_t tmp;
-	float farclip_dist;
+void R_SetupPVSFromCluster( int cluster, int area ) {
+	uint8_t *pvs = NULL;
+	uint8_t *areabits = NULL;
+	int arearowbytes, areabytes;
 
-	if( !rsh.worldModel || ( rn.refdef.rdflags & RDF_NOWORLDMODEL ) ) {
-		return rn.visFarClip;
-	}
-
-	rn.visFarClip = 0;
-
-	farclip_dist = 0;
-	for( i = 0; i < 8; i++ ) {
-		tmp[0] = ( ( i & 1 ) ? rn.visMins[0] : rn.visMaxs[0] );
-		tmp[1] = ( ( i & 2 ) ? rn.visMins[1] : rn.visMaxs[1] );
-		tmp[2] = ( ( i & 4 ) ? rn.visMins[2] : rn.visMaxs[2] );
-
-		dist = DistanceSquared( tmp, rn.viewOrigin );
-		farclip_dist = max( farclip_dist, dist );
-	}
-
-	rn.visFarClip = sqrt( farclip_dist );
-	return rn.visFarClip;
-}
-
-/*
-* R_SetFarClip
-*/
-static void R_SetFarClip( void ) {
-	float farclip;
-
-	if( rn.refdef.rdflags & RDF_NOWORLDMODEL ) {
-		rn.farClip = R_DefaultFarClip();
+	if( !rsh.worldBrushModel || !rsh.worldBrushModel->pvs ) {
+		rn.viewcluster = CLUSTER_INVALID;
+		rn.viewarea = -1;
+		rn.pvs = NULL;
+		rn.areabits = NULL;
 		return;
 	}
 
-	farclip = R_SetVisFarClip();
+	// current viewcluster
+	pvs = Mod_ClusterPVS( cluster, rsh.worldBrushModel );
 
-	if( rsh.worldBrushModel->globalfog ) {
-		float fogdist = rsh.worldBrushModel->globalfog->shader->fog_dist;
-		if( farclip > fogdist ) {
-			farclip = fogdist;
-		} else {
-			rn.clipFlags &= ~16;
-		}
+	arearowbytes = ( ( rsh.worldBrushModel->numareas + 7 ) / 8 );
+	areabytes = arearowbytes;
+#ifdef AREAPORTALS_MATRIX
+	areabytes *= rsh.worldBrushModel->numareas;
+#endif
+
+	if( area > -1 && rn.refdef.areabits && area < rsh.worldBrushModel->numareas )
+#ifdef AREAPORTALS_MATRIX
+	{ areabits = rn.refdef.areabits + area * arearowbytes;}
+#else
+	{ areabits = rn.refdef.areabits;}
+#endif
+	else {
+		areabits = NULL;
 	}
 
-	rn.farClip = max( Z_NEAR, farclip ) + Z_BIAS;
+	rn.viewcluster = cluster;
+	rn.viewarea = area;
+	rn.pvs = pvs;
+	rn.areabits = areabits;
 }
 
 /*
-* R_SetupFrame
+* R_SetupPVS
 */
-static void R_SetupFrame( void ) {
-	int viewcluster;
-	int viewarea;
+void R_SetupPVS( const refdef_t *fd ) {
+	const mleaf_t *leaf;
 
-	// build the transformation matrix for the given view angles
-	VectorCopy( rn.refdef.vieworg, rn.viewOrigin );
-	Matrix3_Copy( rn.refdef.viewaxis, rn.viewAxis );
-
-	rn.lod_dist_scale_for_fov = tan( rn.refdef.fov_x * ( M_PI / 180 ) * 0.5f );
-
-	// current viewcluster
-	if( !( rn.refdef.rdflags & RDF_NOWORLDMODEL ) ) {
-		mleaf_t *leaf;
-
-		VectorCopy( rsh.worldModel->mins, rn.visMins );
-		VectorCopy( rsh.worldModel->maxs, rn.visMaxs );
-
-		leaf = Mod_PointInLeaf( rn.pvsOrigin, rsh.worldModel );
-		viewcluster = leaf->cluster;
-		viewarea = leaf->area;
-
-		if( rf.worldModelSequence != rsh.worldModelSequence ) {
-			rf.frameCount = 0;
-			rf.worldModelSequence = rsh.worldModelSequence;
-
-			if( !rf.numWorldSurfVis ) {
-				rf.worldSurfVis = R_Malloc( rsh.worldBrushModel->numsurfaces * sizeof( *rf.worldSurfVis ) );
-				rf.worldSurfFullVis = R_Malloc( rsh.worldBrushModel->numsurfaces * sizeof( *rf.worldSurfVis ) );
-			} else if( rf.numWorldSurfVis < rsh.worldBrushModel->numsurfaces ) {
-				rf.worldSurfVis = R_Realloc( (void *)rf.worldSurfVis, rsh.worldBrushModel->numsurfaces * sizeof( *rf.worldSurfVis ) );
-				rf.worldSurfFullVis = R_Realloc( (void *)rf.worldSurfFullVis, rsh.worldBrushModel->numsurfaces * sizeof( *rf.worldSurfVis ) );
-			}
-			rf.numWorldSurfVis = rsh.worldBrushModel->numsurfaces;
-
-			if( !rf.numWorldLeafVis ) {
-				rf.worldLeafVis = R_Malloc( rsh.worldBrushModel->numvisleafs * sizeof( *rf.worldLeafVis ) );
-			} else if( rf.numWorldLeafVis < rsh.worldBrushModel->numvisleafs ) {
-				rf.worldLeafVis = R_Realloc( (void *)rf.worldLeafVis, rsh.worldBrushModel->numvisleafs * sizeof( *rf.worldLeafVis ) );
-			}
-			rf.numWorldLeafVis = rsh.worldBrushModel->numvisleafs;
-
-			if( !rf.numWorldDrawSurfVis ) {
-				rf.worldDrawSurfVis = R_Malloc( rsh.worldBrushModel->numDrawSurfaces * sizeof( *rf.worldDrawSurfVis ) );
-			} else if( rf.numWorldDrawSurfVis < rsh.worldBrushModel->numDrawSurfaces ) {
-				rf.worldDrawSurfVis = R_Realloc( (void *)rf.worldDrawSurfVis, rsh.worldBrushModel->numDrawSurfaces * sizeof( *rf.worldDrawSurfVis ) );
-			}
-			rf.numWorldDrawSurfVis = rsh.worldBrushModel->numDrawSurfaces;
-
-			R_WaitWorldModel();
-		}
-	} else {
-		viewcluster = -1;
-		viewarea = -1;
+	if( ( fd->rdflags & RDF_NOWORLDMODEL ) || !rsh.worldBrushModel || r_novis->integer ) {
+		R_SetupPVSFromCluster( -1, -1 );
+		return;
 	}
 
-	rf.viewcluster = viewcluster;
-	rf.viewarea = viewarea;
+	leaf = Mod_PointInLeaf( fd->vieworg, rsh.worldBrushModel );
+	R_SetupPVSFromCluster( leaf->cluster, leaf->area );
+}
 
-	rf.frameCount++;
+/*
+* R_SetCameraAndProjectionMatrices
+*/
+void R_SetCameraAndProjectionMatrices( const mat4_t cam, const mat4_t proj ) {
+	Matrix4_Copy( cam, rn.cameraMatrix );
+	Matrix4_Copy( proj, rn.projectionMatrix );
+	Matrix4_Multiply( proj, cam, rn.cameraProjectionMatrix );
+}
+
+/*
+* R_SetupViewMatrices_
+*/
+static void R_SetupViewMatrices_( const refdef_t *rd, const mat4_t camTransform ) {
+	mat4_t cam, cam_, proj;
+
+	Matrix4_Modelview( rd->vieworg, rd->viewaxis, cam );
+
+	if( rd->rdflags & RDF_USEORTHO ) {
+		Matrix4_OrthoProjection( -rd->ortho_x, rd->ortho_x, -rd->ortho_y, rd->ortho_y,
+			-rn.farClip, rn.farClip, proj );
+	} else {
+		Matrix4_PerspectiveProjection( rd->fov_x, rd->fov_y,
+			rn.nearClip, rn.farClip, rf.cameraSeparation, proj );
+	}
+
+	if( rd->rdflags & RDF_FLIPPED ) {
+		proj[0] = -proj[0];
+		rn.renderFlags |= RF_FLIPFRONTFACE;
+	}
+
+	Matrix4_Multiply( camTransform, cam, cam_ );
+	R_SetCameraAndProjectionMatrices( cam_, proj );
 }
 
 /*
 * R_SetupViewMatrices
 */
-static void R_SetupViewMatrices( void ) {
-	refdef_t *rd = &rn.refdef;
+void R_SetupViewMatrices( const refdef_t *rd ) {
+	const mat4_t flip = { 
+		0, 0, -1, 0,
+		-1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 0, 1
+	};
 
-	Matrix4_Modelview( rd->vieworg, rd->viewaxis, rn.cameraMatrix );
+	R_SetupViewMatrices_( rd, flip );
+}
 
-	if( rd->rdflags & RDF_USEORTHO ) {
-		Matrix4_OrthogonalProjection( -rd->ortho_x, rd->ortho_x, -rd->ortho_y, rd->ortho_y,
-									  -rn.farClip, rn.farClip, rn.projectionMatrix );
-	} else {
-		Matrix4_PerspectiveProjection( rd->fov_x, rd->fov_y,
-									   Z_NEAR, rn.farClip, rf.cameraSeparation, rn.projectionMatrix );
+/*
+* R_SetupSideViewMatrices
+*/
+void R_SetupSideViewMatrices( const refdef_t *rd, int side ) {
+	const mat4_t rectviewmatrix[6] =
+	{
+		// sign-preserving cubemap projections
+		{ // +X
+			0, 0,-1, 0,
+			0, 1, 0, 0,
+			1, 0, 0, 0,
+			0, 0, 0, 1,
+		},
+		{ // -X
+			0, 0, 1, 0,
+			0, 1, 0, 0,
+			1, 0, 0, 0,
+			0, 0, 0, 1,
+		},
+		{ // +Y
+			1, 0, 0, 0,
+			0, 0,-1, 0,
+			0, 1, 0, 0,
+			0, 0, 0, 1,
+		},
+		{ // -Y
+			1, 0, 0, 0,
+			0, 0, 1, 0,
+			0, 1, 0, 0,
+			0, 0, 0, 1,
+		},
+		{ // +Z
+			1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0,-1, 0,
+			0, 0, 0, 1,
+		},
+		{ // -Z
+			1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 1, 0,
+			0, 0, 0, 1,
+		},
+	};
+
+	assert( side >= 0 && side < 6 );
+	if( side < 0 || side >= 6 ) {
+		return;
 	}
 
-	if( rd->rdflags & RDF_FLIPPED ) {
-		rn.projectionMatrix[0] = -rn.projectionMatrix[0];
-		rn.renderFlags |= RF_FLIPFRONTFACE;
-	}
-
-	Matrix4_Multiply( rn.projectionMatrix, rn.cameraMatrix, rn.cameraProjectionMatrix );
+	R_SetupViewMatrices_( rd, rectviewmatrix[side] );
 }
 
 /*
@@ -1002,16 +1008,32 @@ static void R_Clear( int bitMask ) {
 	bool rgbShadow = ( rn.renderFlags & ( RF_SHADOWMAPVIEW | RF_SHADOWMAPVIEW_RGB ) ) == ( RF_SHADOWMAPVIEW | RF_SHADOWMAPVIEW_RGB );
 	bool depthPortal = ( rn.renderFlags & ( RF_MIRRORVIEW | RF_PORTALVIEW ) ) != 0 && ( rn.renderFlags & RF_PORTAL_CAPTURE ) == 0;
 
+	if( depthPortal ) {
+		return;
+	}
+	if( rn.renderFlags & RF_LIGHTVIEW ) {
+		return;
+	}
+	if( rn.renderFlags & RF_SKYSHADOWVIEW ) {
+		// R_DrawPortals has already set up the depth buffer
+		return;
+	}
+
 	fbo = RB_BoundFrameBufferObject();
 
 	if( rgbShadow ) {
 		clearColor = true;
 		Vector4Set( envColor, 1, 1, 1, 1 );
 	} else if( rn.refdef.rdflags & RDF_NOWORLDMODEL ) {
-		clearColor = rn.renderTarget != 0;
+		clearColor = rn.renderTarget != rf.renderTarget;
 		Vector4Set( envColor, 1, 1, 1, 0 );
 	} else {
-		clearColor = !rn.numDepthPortalSurfaces || R_FASTSKY();
+		if( rn.renderFlags & RF_SHADOWMAPVIEW ) {
+			clearColor = false;
+		} else {
+			clearColor = (rn.portalmasklist && !rn.portalmasklist->numDrawSurfs) || R_FASTSKY();
+		}
+
 		if( rsh.worldBrushModel && rsh.worldBrushModel->globalfog && rsh.worldBrushModel->globalfog->shader ) {
 			Vector4Scale( rsh.worldBrushModel->globalfog->shader->fog_color, 1.0 / 255.0, envColor );
 		} else {
@@ -1020,9 +1042,9 @@ static void R_Clear( int bitMask ) {
 	}
 
 	bits = 0;
-	if( !depthPortal ) {
+	//if( !depthPortal ) {
 		bits |= GL_DEPTH_BUFFER_BIT;
-	}
+	//}
 	if( clearColor ) {
 		bits |= GL_COLOR_BUFFER_BIT;
 	}
@@ -1047,7 +1069,7 @@ static void R_SetupGL( void ) {
 		Matrix4_ObliqueNearClipping( p->normal, -p->dist, rn.cameraMatrix, rn.projectionMatrix );
 	}
 
-	RB_SetZClip( Z_NEAR, rn.farClip );
+	RB_SetZClip( rn.nearClip, rn.farClip );
 
 	RB_SetCamera( rn.viewOrigin, rn.viewAxis );
 
@@ -1065,8 +1087,18 @@ static void R_SetupGL( void ) {
 		RB_FlipFrontFace();
 	}
 
+	RB_PolygonOffset( rn.polygonFactor, rn.polygonUnits );
+
+	if( rn.renderFlags & RF_LIGHTVIEW ) {
+		RB_SetRtLightParams( 1, &rn.rtLight, 0, NULL );
+	} else {
+		RB_SetRtLightParams( 0, NULL, 0, NULL );
+	}
+
 	if( ( rn.renderFlags & RF_SHADOWMAPVIEW ) && glConfig.ext.shadow ) {
-		RB_SetShaderStateMask( ~0, GLSTATE_NO_COLORWRITE );
+		RB_SetShaderStateMask( ~0, GLSTATE_NO_COLORWRITE|GLSTATE_OFFSET_FILL|GLSTATE_DEPTHWRITE );
+	} else {
+		RB_SetShaderStateMask( ~0, 0 );
 	}
 }
 
@@ -1074,6 +1106,8 @@ static void R_SetupGL( void ) {
 * R_EndGL
 */
 static void R_EndGL( void ) {
+	RB_FlushDynamicMeshes();
+
 	if( ( rn.renderFlags & RF_SHADOWMAPVIEW ) && glConfig.ext.shadow ) {
 		RB_SetShaderStateMask( ~0, 0 );
 	}
@@ -1084,71 +1118,165 @@ static void R_EndGL( void ) {
 }
 
 /*
-* R_DrawEntities
+* R_CullEntities
 */
-static void R_DrawEntities( void ) {
+static void R_CullEntities( void ) {
 	unsigned int i;
+	int entNum;
 	entity_t *e;
-	bool shadowmap = ( ( rn.renderFlags & RF_SHADOWMAPVIEW ) != 0 );
-	bool culled = true;
+	entSceneCache_t *cache;
+
+	rn.entities = NULL;
+	rn.entpvs = NULL;
+	rn.numEntities = 0;
+
+	if( rn.renderFlags & RF_NOENTS ) {
+		return;
+	}
+
+	rn.entities = R_FrameCache_Alloc( sizeof( *rn.entities ) * rsc.numEntities );
+	rn.entpvs = R_FrameCache_Alloc( sizeof( *rn.entpvs ) * (rsc.numEntities+7)/8 );
+	memset( rn.entpvs, 0, (rsc.numEntities+7)/8 );
 
 	if( rn.renderFlags & RF_ENVVIEW ) {
 		for( i = 0; i < rsc.numBmodelEntities; i++ ) {
-			e = rsc.bmodelEntities[i];
-			if( !r_lerpmodels->integer ) {
-				e->backlerp = 0;
+			entNum = rsc.bmodelEntities[i];
+			e = R_NUM2ENT( entNum );
+
+			if( R_CullModelEntity( e, false ) != 0 ) {
+				continue;
 			}
-			e->outlineHeight = rsc.worldent->outlineHeight;
-			Vector4Copy( rsc.worldent->outlineRGBA, e->outlineColor );
-			R_AddBrushModelToDrawList( e );
+
+			rn.entpvs[entNum>>3] |= (1<<(entNum&7));
+			rn.entities[rn.numEntities++] = entNum;
+		}
+		return;
+	}
+
+	if( rn.renderFlags & RF_LIGHTVIEW ) {
+		for( i = 0; i < rn.numRtLightEntities; i++ ) {
+			entNum = rn.rtLightEntities[i];
+
+			if( !(rn.parent->entpvs[entNum>>3] & (1<<(entNum&7))) ) {
+				// not visible in parent view
+				continue;
+			}
+
+			rn.entpvs[entNum>>3] |= (1<<(entNum&7));
+			rn.entities[rn.numEntities++] = entNum;
+		}
+		return;
+	}
+
+	if( rn.renderFlags & RF_SHADOWMAPVIEW ) {
+		for( i = 0; i < rn.numRtLightEntities; i++ ) {
+			entNum = rn.rtLightEntities[i];
+			e = R_NUM2ENT( entNum );
+			cache = R_ENTCACHE( e );
+
+			if( R_CullModelEntity( e, false ) ) {
+				continue;
+			}
+
+			rn.entpvs[entNum>>3] |= (1<<(entNum&7));
+			rn.entities[rn.numEntities++] = entNum;
 		}
 		return;
 	}
 
 	for( i = rsc.numLocalEntities; i < rsc.numEntities; i++ ) {
-		e = R_NUM2ENT( i );
+		bool culled;
+
+		entNum = i;
+		e = R_NUM2ENT( entNum );
 		culled = true;
 
-		if( !r_lerpmodels->integer ) {
-			e->backlerp = 0;
+		if( e->flags & RF_WEAPONMODEL ) {
+			if( rn.renderFlags & RF_NONVIEWERREF ) {
+				continue;
+			}
+			goto add;
+		}
+
+		if( e->flags & RF_VIEWERMODEL ) {
+			//if( !(rn.renderFlags & RF_NONVIEWERREF) )
+			if( !( rn.renderFlags & ( RF_MIRRORVIEW ) ) ) {
+				continue;
+			}
+		}
+
+		if( e->flags & RF_NODEPTHTEST ) {
+			goto add;
 		}
 
 		switch( e->rtype ) {
-			case RT_MODEL:
-				if( !e->model ) {
-					R_AddNullSurfToDrawList( e );
-					continue;
-				}
+		case RT_MODEL:
+			culled = R_CullModelEntity( e, false ) != 0;
+			break;
+		case RT_SPRITE:
+			culled = R_CullSpriteEntity( e ) != 0;
+			break;
+		default:
+			break;
+		}
 
-				switch( e->model->type ) {
-					case mod_alias:
-						culled = !R_AddAliasModelToDrawList( e );
-						break;
-					case mod_skeletal:
-						culled = !R_AddSkeletalModelToDrawList( e );
-						break;
-					case mod_brush:
-						e->outlineHeight = rsc.worldent->outlineHeight;
-						Vector4Copy( rsc.worldent->outlineRGBA, e->outlineColor );
-						culled = !R_AddBrushModelToDrawList( e );
-					default:
-						break;
-				}
+		if( culled ) {
+			continue;
+		}
+
+add:
+		rn.entpvs[entNum>>3] |= (1<<(entNum&7));
+		rn.entities[rn.numEntities++] = entNum;
+	}
+}
+
+/*
+* R_DrawEntities
+*/
+static void R_DrawEntities( void ) {
+	unsigned int i;
+	int lod;
+	entity_t *e;
+	entSceneCache_t *cache;
+
+	for( i = 0; i < rn.numEntities; i++ ) {
+		e = R_NUM2ENT( rn.entities[i] );
+		cache = R_ENTCACHE( e );
+
+		lod = 0;
+		if( !(e->flags & RF_FORCENOLOD ) ) {
+			float dist = BoundsNearestDistance( rn.lodOrigin, cache->absmins, cache->absmaxs );
+			lod = R_ComputeLOD( dist, cache->radius, rn.lodScale, rn.lodBias );
+		}
+
+		switch( e->rtype ) {
+		case RT_MODEL:
+			switch( cache->mod_type ) {
+			case mod_alias:
+				R_AddAliasModelToDrawList( e, lod );
 				break;
-			case RT_SPRITE:
-				culled = !R_AddSpriteToDrawList( e );
+			case mod_skeletal:
+				R_AddSkeletalModelToDrawList( e, lod );
+				break;
+			case mod_brush:
+				R_AddBrushModelToDrawList( e );
+				rf.stats.c_ents_bmodels++;
+				break;
+			case mod_bad:
+				R_AddNullSurfToDrawList( e );
 				break;
 			default:
 				break;
+			}
+			break;
+		case RT_SPRITE:
+			R_AddSpriteToDrawList( e );
+			break;
+		default:
+			break;
 		}
 
-		if( shadowmap && !culled ) {
-			if( rsc.entShadowGroups[i] != rn.shadowGroup->id ||
-				r_shadows_self_shadow->integer ) {
-				// not from the casting group, mark as shadowed
-				rsc.entShadowBits[i] |= rn.shadowGroup->bit;
-			}
-		}
+		rf.stats.c_ents_total++;
 	}
 }
 
@@ -1167,30 +1295,27 @@ static void R_BindRefInstFBO( void ) {
 */
 void R_RenderView( const refdef_t *fd ) {
 	int msec = 0;
-	bool shadowMap = rn.renderFlags & RF_SHADOWMAPVIEW ? true : false;
+	bool lightOrShadow = rn.renderFlags & (RF_LIGHTVIEW|RF_SHADOWMAPVIEW) ? true : false;
+
+	rf.frameCount++;
 
 	rn.refdef = *fd;
-
-	// load view matrices with default far clip value
-	R_SetupViewMatrices();
 
 	rn.fog_eye = NULL;
 	rn.hdrExposure = 1;
 
-	rn.shadowBits = 0;
-	rn.dlightBits = 0;
-
+	rn.numRealtimeLights = 0;
 	rn.numPortalSurfaces = 0;
 	rn.numDepthPortalSurfaces = 0;
 	rn.skyportalSurface = NULL;
 
 	ClearBounds( rn.visMins, rn.visMaxs );
+	ClearBounds( rn.pvsMins, rn.pvsMaxs );
+
+	VectorCopy( rn.refdef.vieworg, rn.viewOrigin );
+	Matrix3_Copy( rn.refdef.viewaxis, rn.viewAxis );
 
 	R_ClearSky( &rn.skyDrawSurface );
-
-	if( r_novis->integer ) {
-		rn.renderFlags |= RF_NOVIS;
-	}
 
 	if( r_lightmap->integer ) {
 		rn.renderFlags |= RF_LIGHTMAP;
@@ -1208,17 +1333,19 @@ void R_RenderView( const refdef_t *fd ) {
 		return;
 	}
 
-	R_SetupFrame();
-
-	R_SetupFrustum( &rn.refdef, rn.farClip, rn.frustum );
-
 	// we know the initial farclip at this point after determining visible world leafs
 	// R_DrawEntities can make adjustments as well
 
-	if( !shadowMap ) {
-		if( !( rn.refdef.rdflags & RDF_NOWORLDMODEL ) ) {
-			R_DrawWorld();
+	if( rn.renderFlags & RF_LIGHTVIEW ) {
+		R_DrawWorldShadowNode();
+	} else if( rn.renderFlags & RF_SHADOWMAPVIEW ) {
+		R_DrawRtLightWorld();
+	} else {
+		R_DrawWorldNode();
+	}
 
+	if( !lightOrShadow ) {
+		if( !( rn.refdef.rdflags & RDF_NOWORLDMODEL ) ) {
 			rn.fog_eye = R_FogForSphere( rn.viewOrigin, 0.5 );
 			rn.hdrExposure = R_LightExposureForOrigin( rn.viewOrigin );
 		}
@@ -1237,22 +1364,16 @@ void R_RenderView( const refdef_t *fd ) {
 	if( r_speeds->integer ) {
 		msec = ri.Sys_Milliseconds();
 	}
+
+	R_CullEntities();
+
 	R_DrawEntities();
+
 	if( r_speeds->integer ) {
 		rf.stats.t_add_entities += ( ri.Sys_Milliseconds() - msec );
 	}
 
 	RJ_FinishJobs();
-
-	if( !shadowMap ) {
-		// now set  the real far clip value and reload view matrices
-		R_SetFarClip();
-
-		R_SetupViewMatrices();
-
-		// render to depth textures, mark shadowed entities and surfaces
-		R_DrawShadowmaps();
-	}
 
 	R_SortDrawList( rn.meshlist );
 
@@ -1263,27 +1384,28 @@ void R_RenderView( const refdef_t *fd ) {
 	R_DrawPortals();
 
 	if( r_portalonly->integer && !( rn.renderFlags & ( RF_MIRRORVIEW | RF_PORTALVIEW ) ) ) {
-		return;
+		goto end;
 	}
 
 	R_Clear( ~0 );
 
+	R_DrawShadows();
+
 	if( r_speeds->integer ) {
 		msec = ri.Sys_Milliseconds();
 	}
+
 	R_DrawSurfaces( rn.meshlist );
-	if( r_speeds->integer ) {
-		rf.stats.t_draw_meshes += ( ri.Sys_Milliseconds() - msec );
-	}
 
 	if( r_speeds->integer ) {
-		R_GetVBOSliceCounts( rn.meshlist, &rf.stats.c_slices_verts, &rf.stats.c_slices_elems );
+		rf.stats.t_draw_meshes += ( ri.Sys_Milliseconds() - msec );
 	}
 
 	if( r_showtris->integer ) {
 		R_DrawOutlinedSurfaces( rn.meshlist );
 	}
 
+end:
 	R_TransformForWorld();
 
 	R_EndGL();
@@ -1298,18 +1420,20 @@ static unsigned int riStackSize;
 */
 void R_ClearRefInstStack( void ) {
 	riStackSize = 0;
+	memset( riStack, 0, sizeof( riStack ) );
+	memset( &rn, 0, sizeof( refinst_t ) );
 }
 
 /*
 * R_PushRefInst
 */
-bool R_PushRefInst( void ) {
+refinst_t *R_PushRefInst( void ) {
 	if( riStackSize == REFINST_STACK_SIZE ) {
-		return false;
+		return NULL;
 	}
 	riStack[riStackSize++] = rn;
 	R_EndGL();
-	return true;
+	return &riStack[riStackSize-1];
 }
 
 /*
@@ -1320,6 +1444,8 @@ void R_PopRefInst( void ) {
 		return;
 	}
 
+	RB_FlushDynamicMeshes();
+
 	rn = riStack[--riStackSize];
 	R_BindRefInstFBO();
 
@@ -1328,6 +1454,16 @@ void R_PopRefInst( void ) {
 
 //=======================================================================
 
+/*
+* R_SetTransformMatrix
+*/
+void R_SetTransformMatrix( const float *pm ) {
+	RB_FlushDynamicMeshes();
+
+	RB_LoadObjectMatrix( pm != NULL ? pm : mat4x4_identity );
+}
+
+//=======================================================================
 
 void R_Finish( void ) {
 	qglFinish();
@@ -1384,12 +1520,12 @@ void R_SetGamma( float gamma ) {
 		return;
 	}
 
-	invGamma = 1.0 / bound( 0.5, gamma, 3.0 );
+	invGamma = 1.0 / Q_bound( 0.5, gamma, 3.0 );
 	div = (double)( 1 << 0 ) / ( glConfig.gammaRampSize - 0.5 );
 
 	for( i = 0; i < glConfig.gammaRampSize; i++ ) {
 		v = ( int )( 65535.0 * pow( ( (double)i + 0.5 ) * div, invGamma ) + 0.5 );
-		gammaRamp[i] = gammaRamp[i + GAMMARAMP_STRIDE] = gammaRamp[i + 2 * GAMMARAMP_STRIDE] = ( ( unsigned short )bound( 0, v, 65535 ) );
+		gammaRamp[i] = gammaRamp[i + GAMMARAMP_STRIDE] = gammaRamp[i + 2 * GAMMARAMP_STRIDE] = ( ( unsigned short )Q_bound( 0, v, 65535 ) );
 	}
 
 	GLimp_SetGammaRamp( GAMMARAMP_STRIDE, glConfig.gammaRampSize, gammaRamp );
@@ -1401,8 +1537,8 @@ void R_SetGamma( float gamma ) {
 void R_SetWallFloorColors( const vec3_t wallColor, const vec3_t floorColor ) {
 	int i;
 	for( i = 0; i < 3; i++ ) {
-		rsh.wallColor[i] = bound( 0, floor( wallColor[i] ) / 255.0, 1.0 );
-		rsh.floorColor[i] = bound( 0, floor( floorColor[i] ) / 255.0, 1.0 );
+		rsh.wallColor[i] = Q_bound( 0, floor( wallColor[i] ) / 255.0, 1.0 );
+		rsh.floorColor[i] = Q_bound( 0, floor( floorColor[i] ) / 255.0, 1.0 );
 	}
 }
 
@@ -1424,6 +1560,133 @@ bool R_IsRenderingToScreen( void ) {
 }
 
 /*
+* R_MultisampleSamples
+*/
+int R_MultisampleSamples( int samples ) {
+	if( !glConfig.ext.framebuffer_multisample || samples <= 1 ) {
+		return 0;
+	}
+	return Q_bound( 2, samples, glConfig.maxFramebufferSamples );
+}
+
+/*
+* R_BlitTextureToScrFbo
+*/
+void R_BlitTextureToScrFbo( const refdef_t *fd, image_t *image, int dstFbo,
+	int program_type, const vec4_t color, int blendMask, int numShaderImages, image_t **shaderImages,
+	int iParam0 ) {
+	int x, y;
+	int w, h, fw, fh;
+	int scissor[4], viewport[4];
+	static char s_name[] = "$builtinpostprocessing";
+	static shaderpass_t p;
+	static shader_t s;
+	int i;
+	static tcmod_t tcmod;
+	mat4_t m;
+
+	assert( rsh.postProcessingVBO );
+	if( numShaderImages >= MAX_SHADER_IMAGES ) {
+		numShaderImages = MAX_SHADER_IMAGES;
+	}
+
+	// blit + flip using a static mesh to avoid redundant buffer uploads
+	// (also using custom PP effects like FXAA with the stream VBO causes
+	// Adreno to mark the VBO as "slow" (due to some weird bug)
+	// for the rest of the frame and drop FPS to 10-20).
+	RB_FlushDynamicMeshes();
+
+	RB_BindFrameBufferObject( dstFbo );
+
+	RB_GetScissor( &scissor[0], &scissor[1], &scissor[2], &scissor[3] );
+	RB_GetViewport( &viewport[0], &viewport[1], &viewport[2], &viewport[3] );
+
+	if( !dstFbo ) {
+		// default framebuffer
+		// set the viewport to full resolution
+		// but keep the scissoring region
+		if( fd ) {
+			x = fd->x;
+			y = fd->y;
+			w = fw = fd->width;
+			h = fh = fd->height;
+		} else {
+			x = 0;
+			y = 0;
+			w = fw = glConfig.width;
+			h = fh = glConfig.height;
+		}
+		RB_Viewport( 0, 0, glConfig.width, glConfig.height );
+		RB_Scissor( scissor[0], scissor[1], scissor[2], scissor[3] );
+	} else {
+		// aux framebuffer
+		// set the viewport to full resolution of the framebuffer (without the NPOT padding if there's one)
+		// draw quad on the whole framebuffer texture
+		// set scissor to default framebuffer resolution
+		image_t *cb = RFB_GetObjectTextureAttachment( dstFbo, false, 0 );
+		x = 0;
+		y = 0;
+		w = fw = rf.frameBufferWidth;
+		h = fh = rf.frameBufferHeight;
+		if( cb ) {
+			fw = cb->upload_width;
+			fh = cb->upload_height;
+		}
+		RB_Viewport( 0, 0, w, h );
+		RB_Scissor( 0, 0, glConfig.width, glConfig.height );
+	}
+
+	s.vattribs = VATTRIB_POSITION_BIT | VATTRIB_TEXCOORDS_BIT;
+	s.sort = SHADER_SORT_NEAREST;
+	s.numpasses = 1;
+	s.name = s_name;
+	s.passes = &p;
+
+	p.rgbgen.type = RGB_GEN_IDENTITY;
+	p.alphagen.type = ALPHA_GEN_IDENTITY;
+	p.tcgen = TC_GEN_NONE;
+	p.images[0] = image;
+	for( i = 1; i < numShaderImages + 1; i++ ) {
+		if( i >= MAX_SHADER_IMAGES ) {
+			break;
+		}
+		p.images[i] = shaderImages[i - 1];
+	}
+	for( ; i < MAX_SHADER_IMAGES; i++ )
+		p.images[i] = NULL;
+	p.flags = blendMask | SHADERPASS_NOSRGB;
+	p.program_type = program_type;
+	p.anim_numframes = iParam0;
+
+	if( !dstFbo ) {
+		tcmod.type = TC_MOD_TRANSFORM;
+		tcmod.args[0] = ( float )( w ) / ( float )( image->upload_width );
+		tcmod.args[1] = ( float )( h ) / ( float )( image->upload_height );
+		tcmod.args[4] = ( float )( x ) / ( float )( image->upload_width );
+		tcmod.args[5] = ( float )( image->upload_height - h - y ) / ( float )( image->upload_height );
+		p.numtcmods = 1;
+		p.tcmods = &tcmod;
+	} else {
+		p.numtcmods = 0;
+	}
+
+	Matrix4_Identity( m );
+	Matrix4_Scale2D( m, fw, fh );
+	Matrix4_Translate2D( m, x, y );
+	RB_LoadObjectMatrix( m );
+
+	RB_BindShader( NULL, &s, NULL );
+	RB_BindVBO( rsh.postProcessingVBO->index, GL_TRIANGLES );
+	RB_DrawElements( 0, 4, 0, 6 );
+
+	RB_LoadObjectMatrix( mat4x4_identity );
+
+	// restore 2D viewport and scissor
+	RB_Viewport( viewport[0], viewport[1], viewport[2], viewport[3] );
+	RB_Scissor( scissor[0], scissor[1], scissor[2], scissor[3] );
+}
+
+/*
 * R_WriteSpeedsMessage
 */
 const char *R_WriteSpeedsMessage( char *out, size_t size ) {
@@ -1437,29 +1700,30 @@ const char *R_WriteSpeedsMessage( char *out, size_t size ) {
 	if( r_speeds->integer && !( rn.refdef.rdflags & RDF_NOWORLDMODEL ) ) {
 		switch( r_speeds->integer ) {
 			case 1:
+			case 2:
+			case 3:
 				RB_StatsMessage( backend_msg, sizeof( backend_msg ) );
 
 				Q_snprintfz( out, size,
 							 "%u fps\n"
 							 "%4u wpoly %4u leafs %4u surfs\n"
-							 "%5u sverts %5u stris\n"
+							 "cull nodes\\surfs\\lights: %5u\\%5u\\%5u\n"
+							 "node world\\light: %5u\\%5u\n"
+							 "polys\\ents: %5u\\%5u  draw: %5u\n"
+							 "world\\dynamic: lights %3u\\%3u  shadows %3u\\%3u\n"
+							 "ents total: %5u bmodels: %5u\n"
+							 "frame cache: %.3fMB\n"
 							 "%s",
 							 (int)(1000.0 / rf.frameTime.average),
 							 rf.stats.c_brush_polys, rf.stats.c_world_leafs, rf.stats.c_world_draw_surfs,
-							 rf.stats.c_slices_verts, rf.stats.c_slices_elems / 3,
+							 rf.stats.t_cull_world_nodes, rf.stats.t_cull_world_surfs, rf.stats.t_cull_rtlights, 
+							 rf.stats.t_world_node, rf.stats.t_light_node,
+							 rf.stats.t_add_polys, rf.stats.t_add_entities, rf.stats.t_draw_meshes,
+							 rf.stats.c_world_lights, rf.stats.c_dynamic_lights, rf.stats.c_world_light_shadows, rf.stats.c_dynamic_light_shadows,
+							 rf.stats.c_ents_total, rf.stats.c_ents_bmodels,
+							 R_FrameCache_TotalSize() / 1048576.0,
 							 backend_msg
-							 );
-				break;
-			case 2:
-			case 3:
-				Q_snprintfz( out, size,
-							 "cull nodes\\surfs: %5u\\%5u\n"
-							 "node: %5u\n"
-							 "polys\\ents: %5u\\%5u  draw: %5u\n",
-							 rf.stats.t_cull_world_nodes, rf.stats.t_cull_world_surfs, 
-							 rf.stats.t_world_node,
-							 rf.stats.t_add_polys, rf.stats.t_add_entities, rf.stats.t_draw_meshes
-							 );
+							);
 				break;
 			case 4:
 			case 5:
@@ -1472,25 +1736,24 @@ const char *R_WriteSpeedsMessage( char *out, size_t size ) {
 								 "%s type:%i sort:%i",
 								 debugSurface->shader->name, debugSurface->facetype, debugSurface->shader->sort );
 
-					Q_strncatz( out, "\n", size );
-
-					if( r_speeds->integer == 5 && drawSurf->vbo ) {
-						numVerts = drawSurf->vbo->numVerts;
-						numTris = drawSurf->vbo->numElems / 3;
+					if( r_speeds->integer == 5 && drawSurf && drawSurf->vbo ) {
+						mesh_vbo_t *vbo = R_GetVBOByIndex( drawSurf->vbo );
+						numVerts = vbo->numVerts;
+						numTris = vbo->numElems / 3;
 					} else {
 						numVerts = debugSurface->mesh.numVerts;
 						numTris = debugSurface->mesh.numElems;
 					}
 
 					if( numVerts ) {
+						Q_strncatz( out, "\n", size );
 						Q_snprintfz( out + strlen( out ), size - strlen( out ),
 									 "verts: %5i tris: %5i", numVerts, numTris );
 					}
 
-					Q_strncatz( out, "\n", size );
-
 					if( debugSurface->fog && debugSurface->fog->shader
 						&& debugSurface->fog->shader != debugSurface->shader ) {
+						Q_strncatz( out, "\n", size );
 						Q_strncatz( out, debugSurface->fog->shader->name, size );
 					}
 				}
@@ -1531,14 +1794,10 @@ const msurface_t *R_GetDebugSurface( void ) {
 * R_RenderDebugSurface
 */
 void R_RenderDebugSurface( const refdef_t *fd ) {
-	rtrace_t tr;
+	rtrace_t tr = { 0 };
 	vec3_t forward;
 	vec3_t start, end;
 	msurface_t *debugSurf = NULL;
-
-	if( fd->rdflags & RDF_NOWORLDMODEL ) {
-		return;
-	}
 
 	if( r_speeds->integer == 4 || r_speeds->integer == 5 ) {
 		msurface_t *surf = NULL;
@@ -1555,21 +1814,20 @@ void R_RenderDebugSurface( const refdef_t *fd ) {
 
 			R_ClearDrawList( rn.portalmasklist );
 
-			if( R_AddSurfToDrawList( rn.meshlist, R_NUM2ENT( tr.ent ), NULL, surf->shader, 0, 0, NULL, drawSurf ) ) {
+			if( R_AddSurfToDrawList( rn.meshlist, R_NUM2ENT( tr.ent ), surf->shader, NULL, -1, 0, 0, NULL, drawSurf ) ) {
 				if( rn.refdef.rdflags & RDF_FLIPPED ) {
 					RB_FlipFrontFace();
 				}
 
 				if( r_speeds->integer == 5 ) {
-					// VBO debug mode
-					R_AddDrawListVBOSlice( rn.meshlist, drawSurf - rsh.worldBrushModel->drawSurfaces,
-								   drawSurf->numVerts, drawSurf->numElems,
-								   0, 0 );
+					unsigned i;
+
+					// vbo debug mode
+					for( i = 0; i < drawSurf->numWorldSurfaces; i++ )
+						rn.meshlist->worldSurfVis[drawSurf->worldSurfaces[i]] = 1;
 				} else {
-					// classic mode (showtris for individual surface)
-					R_AddDrawListVBOSlice( rn.meshlist, drawSurf - rsh.worldBrushModel->drawSurfaces,
-								   surf->mesh.numVerts, surf->mesh.numElems,
-								   surf->firstDrawSurfVert, surf->firstDrawSurfElem );
+					// individual surface
+					rn.meshlist->worldSurfVis[surf - rsh.worldBrushModel->surfaces] = 1;
 				}
 
 				R_DrawOutlinedSurfaces( rn.meshlist );
@@ -1584,6 +1842,7 @@ void R_RenderDebugSurface( const refdef_t *fd ) {
 	}
 
 	ri.Mutex_Lock( rf.debugSurfaceLock );
+	rf.debugTrace = tr;
 	rf.debugSurface = debugSurf;
 	ri.Mutex_Unlock( rf.debugSurfaceLock );
 }
@@ -1592,6 +1851,7 @@ void R_RenderDebugSurface( const refdef_t *fd ) {
 * R_BeginFrame
 */
 void R_BeginFrame( float cameraSeparation, bool forceClear, int swapInterval ) {
+	int samples;
 	int64_t time = ri.Sys_Milliseconds();
 
 	GLimp_BeginFrame();
@@ -1630,10 +1890,6 @@ void R_BeginFrame( float cameraSeparation, bool forceClear, int swapInterval ) {
 #endif
 	}
 
-	if( forceClear ) {
-		RB_Clear( GL_COLOR_BUFFER_BIT, 0, 0, 0, 1 );
-	}
-
 	// set swap interval (vertical synchronization)
 	rf.swapInterval = R_SetSwapInterval( swapInterval, rf.swapInterval );
 
@@ -1649,7 +1905,14 @@ void R_BeginFrame( float cameraSeparation, bool forceClear, int swapInterval ) {
 		rf.frameTime.oldCount = rf.frameTime.count;
 	}
 
-	R_Set2DMode( true );
+	samples = R_MultisampleSamples( r_samples2D->integer );
+	rf.renderTarget = R_RegisterMultisampleTarget( &rsh.st2D, samples, false, true );
+
+	R_Begin2D( true );
+
+	if( forceClear ) {
+		RB_Clear( GL_COLOR_BUFFER_BIT, 0, 0, 0, 1 );
+	}
 }
 
 /*
@@ -1659,13 +1922,52 @@ void R_EndFrame( void ) {
 	// render previously batched 2D geometry, if any
 	RB_FlushDynamicMeshes();
 
+	R_BindFrameBufferObject( 0 );
+
+	R_Begin2D( false );
+
+	RB_EnableTriangleOutlines( false );
+
+	// resolve multisampling and blit to default framebuffer
+	if( rf.renderTarget > 0 ) {
+		RB_BlitFrameBufferObject( rf.renderTarget, rsh.st2D.screenTex->fbo, 
+			GL_COLOR_BUFFER_BIT, FBO_COPY_NORMAL, GL_NEAREST, 0, 0 );
+
+		R_BlitTextureToScrFbo( NULL, rsh.st2D.screenTex, 0, GLSL_PROGRAM_TYPE_NONE, 
+			colorWhite, 0, 0, NULL, 0 );
+
+		RB_FlushDynamicMeshes();
+	}
+
 	R_PolyBlend();
 
-	R_ApplyBrightness();
+	if( 0 )
+	{
+		int side = /*r_temp2->integer - 1*/0;
+		image_t *atlas = R_GetShadowmapAtlasTexture();
 
-	// reset the 2D state so that the mode will be
-	// properly set back again in R_BeginFrame
-	R_Set2DMode( false );
+		if( side >= 0 && atlas && rn.numRealtimeLights > 0 ) {
+			int size = rn.rtlights[0]->shadowSize;
+			float x = rn.rtlights[0]->shadowOffset[0];
+			float y = rn.rtlights[0]->shadowOffset[1];
+			float st = (float)size / rsh.shadowmapAtlasTexture->upload_width;
+
+			x = (1.0 * x + (side & 1) * size) / (float)rsh.shadowmapAtlasTexture->upload_width;
+			y = (1.0 * y + (side >> 1) * size) / (float)rsh.shadowmapAtlasTexture->upload_width;
+
+			R_DrawStretchQuick( 0, 0, 128, 128, 
+				x, y, 
+				x + st, y + st, colorRed, GLSL_PROGRAM_TYPE_NONE,
+				rsh.whiteTexture, 0 );
+
+			R_DrawStretchQuick( 0, 0, 128, 128, 
+				x, y, 
+				x + st, y + st, colorWhite, GLSL_PROGRAM_TYPE_NONE,
+				atlas, 0 );
+		}
+	}
+
+	R_End2D();
 
 	RB_EndFrame();
 
@@ -1770,4 +2072,169 @@ int R_LoadFile_( const char *path, int flags, void **buffer, const char *filenam
 */
 void R_FreeFile_( void *buffer, const char *filename, int fileline ) {
 	ri.Mem_Free( buffer, filename, fileline );
+}
+
+//===================================================================
+
+//#define FRAMECACHE_DEBUG
+
+typedef struct r_framecachemark_s {
+	uint8_t *ptr;
+	struct r_framecache_s *cache;
+} r_framecachemark_t;
+
+typedef struct r_framecache_s {
+	size_t dataSize;
+	uint8_t *dataRover;
+	r_framecachemark_t mark;
+	struct r_framecache_s *next;
+} r_framecache_t;
+
+static r_framecache_t *r_frameCacheHead;
+static size_t r_frameCacheTotalSize;
+
+/*
+* R_FrameCache_Free
+*/
+void R_FrameCache_Free( void ) {
+	r_framecache_t *next, *cache;
+
+	cache = r_frameCacheHead;
+	while( cache ) {
+		next = cache->next;
+		R_Free( cache );
+		cache = next;
+	}
+
+	r_frameCacheHead = NULL;
+	r_frameCacheTotalSize = 0;
+}
+
+/*
+* R_FrameCache_ResetBlock
+*/
+static void R_FrameCache_ResetBlock( r_framecache_t *cache ) {
+	cache->dataRover = (uint8_t *)(((uintptr_t)(cache + 1) + 15) & ~15);
+	cache->mark.cache = cache;
+	cache->mark.ptr = cache->dataRover;
+}
+
+/*
+* R_FrameCache_NewBlock
+*/
+r_framecache_t *R_FrameCache_NewBlock( size_t size ) {
+	r_framecache_t *cache;
+
+	cache = R_Malloc( size + sizeof( r_framecache_t ) + 16 );
+	cache->dataSize = size;
+
+	R_FrameCache_ResetBlock( cache );
+
+	r_frameCacheTotalSize += size;
+	return cache;
+}
+
+/*
+* R_FrameCache_Clear
+*
+* Allocate a whole new block of heap memory to accomodate all data from the previous frame.
+*/
+void R_FrameCache_Clear( void ) {
+	size_t newSize;
+	
+	newSize = r_frameCacheTotalSize;
+	if( newSize < MIN_FRAMECACHE_SIZE )
+		newSize = MIN_FRAMECACHE_SIZE;
+
+	if( !r_frameCacheHead || r_frameCacheHead->dataSize < newSize ) {
+		r_framecache_t *cache;
+
+		R_FrameCache_Free();
+
+		cache = R_FrameCache_NewBlock( newSize );
+
+		r_frameCacheHead = cache;
+	}
+
+	R_FrameCache_ResetBlock( r_frameCacheHead );
+
+#ifdef FRAMECACHE_DEBUG
+	Com_Printf( "R_FrameCache_Clear\n" );
+#endif
+}
+
+/*
+* R_FrameCache_Alloc
+*/
+void *R_FrameCache_Alloc_( size_t size, const char *filename, int fileline ) {
+	uint8_t *data;
+	r_framecache_t *cache = r_frameCacheHead;
+	size_t used;
+
+	if( !size ) {
+		return NULL;
+	}
+
+#ifdef FRAMECACHE_DEBUG
+	Com_Printf( "R_FrameCache_Alloc_: %s:%d\n", filename, fileline );
+#endif
+
+	size = ((size + 15) & ~15);
+
+	assert( cache != NULL );
+	if( cache == NULL ) {
+		return NULL;
+	}
+
+	used = cache->dataRover - (uint8_t *)cache;
+	if( used + size > cache->dataSize ) {
+		size_t newSize = r_frameCacheTotalSize / 2;
+
+		if( newSize < MIN_FRAMECACHE_SIZE ) {
+			newSize = MIN_FRAMECACHE_SIZE;
+		}
+		if( newSize < size ) {
+			newSize = size;
+		}
+
+		cache = R_FrameCache_NewBlock( newSize );
+		cache->next = r_frameCacheHead;
+		r_frameCacheHead = cache;
+	}
+
+	data = cache->dataRover;
+	cache->dataRover += size;
+	return data;
+}
+
+/*
+* R_FrameCache_TotalSize
+*/
+size_t R_FrameCache_TotalSize( void ) {
+	return r_frameCacheTotalSize;
+}
+
+/*
+* R_FrameCache_SetMark
+*/
+void *R_FrameCache_SetMark_( const char *filename, int fileline ) {
+	r_framecache_t *cache = r_frameCacheHead;
+	r_framecachemark_t *cmark = &cache->mark;
+	cmark->ptr = cache->dataRover;
+#ifdef FRAMECACHE_DEBUG
+	Com_Printf( "R_FrameCache_SetMark_: %s:%d\n", filename, fileline );
+#endif
+	return (void *)cmark;
+}
+
+/*
+* R_FrameCache_FreeToMark_
+*/
+void R_FrameCache_FreeToMark_( void *mark, const char *filename, int fileline ) {
+	r_framecachemark_t *cmark = mark;
+	r_framecache_t *cache = cmark->cache;
+#ifdef FRAMECACHE_DEBUG
+	Com_Printf( "R_FrameCache_FreeToMark_: %s:%d\n", filename, fileline );
+#endif
+	cache->dataRover = cmark->ptr;
 }

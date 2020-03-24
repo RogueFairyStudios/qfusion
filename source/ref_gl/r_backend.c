@@ -102,6 +102,7 @@ void RB_EndRegistration( void ) {
 void RB_SetTime( int64_t time ) {
 	rb.time = time;
 	rb.nullEnt.shaderTime = ri.Sys_Milliseconds();
+	rb.dirtyUniformState = true;
 }
 
 /*
@@ -112,6 +113,7 @@ void RB_BeginFrame( void ) {
 	rb.nullEnt.scale = 1;
 	VectorClear( rb.nullEnt.origin );
 	Matrix3_Identity( rb.nullEnt.axis );
+	rb.dirtyUniformState = true;
 
 	memset( &rb.stats, 0, sizeof( rb.stats ) );
 
@@ -155,7 +157,9 @@ static void RB_SetGLDefaults( void ) {
 	qglDepthFunc( GL_LEQUAL );
 	qglDepthMask( GL_FALSE );
 	qglDisable( GL_POLYGON_OFFSET_FILL );
+#ifdef GL_ES_VERSION_2_0
 	qglPolygonOffset( -1.0f, 0.0f ); // units will be handled by RB_DepthOffset
+#endif
 	qglColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	qglEnable( GL_DEPTH_TEST );
 #ifndef GL_ES_VERSION_2_0
@@ -226,17 +230,27 @@ void RB_BindImage( int tmu, const image_t *tex ) {
 }
 
 /*
+* RB_PolygonOffset
+*/
+void RB_PolygonOffset( float polygonfactor, float polygonunits ) {
+	rb.gl.polygonfactor = polygonfactor;
+	rb.gl.polygonunits = polygonunits;
+}
+
+/*
 * RB_DepthRange
 */
 void RB_DepthRange( float depthmin, float depthmax ) {
-	clamp( depthmin, 0.0f, 1.0f );
-	clamp( depthmax, 0.0f, 1.0f );
+	Q_clamp( depthmin, 0.0f, 1.0f );
+	Q_clamp( depthmax, 0.0f, 1.0f );
 	rb.gl.depthmin = depthmin;
 	rb.gl.depthmax = depthmax;
+#ifdef GL_ES_VERSION_2_0
 	// depthmin == depthmax is a special case when a specific depth value is going to be written
 	if( ( depthmin != depthmax ) && !rb.gl.depthoffset ) {
 		depthmin += 4.0f / 65535.0f;
 	}
+#endif
 	qglDepthRange( depthmin, depthmax );
 }
 
@@ -256,9 +270,11 @@ void RB_DepthOffset( bool enable ) {
 	float depthmax = rb.gl.depthmax;
 	rb.gl.depthoffset = enable;
 	if( depthmin != depthmax ) {
+#ifdef GL_ES_VERSION_2_0
 		if( !enable ) {
 			depthmin += 4.0f / 65535.0f;
 		}
+#endif
 		qglDepthRange( depthmin, depthmax );
 	}
 }
@@ -275,6 +291,7 @@ void RB_ClearDepth( float depth ) {
 */
 void RB_LoadCameraMatrix( const mat4_t m ) {
 	Matrix4_Copy( m, rb.cameraMatrix );
+	rb.dirtyUniformState = true;
 }
 
 /*
@@ -282,8 +299,24 @@ void RB_LoadCameraMatrix( const mat4_t m ) {
 */
 void RB_LoadObjectMatrix( const mat4_t m ) {
 	Matrix4_Copy( m, rb.objectMatrix );
-	Matrix4_MultiplyFast( rb.cameraMatrix, m, rb.modelviewMatrix );
+	Matrix4_Multiply( rb.cameraMatrix, m, rb.modelviewMatrix );
 	Matrix4_Multiply( rb.projectionMatrix, rb.modelviewMatrix, rb.modelviewProjectionMatrix );
+
+	if( rb.numRealtimeLights > 0 ) {
+		vec3_t tvec;
+		rtlight_t *rl = rb.rtlights[0];
+
+		Matrix4_Multiply( rb.rtlights[0]->worldToLightMatrix, m, rb.objectToLightMatrix );
+
+		if( rl->directional ) {
+			VectorNegate( &rl->axis[AXIS_FORWARD], tvec );
+		} else {
+			VectorSubtract( rl->origin, rb.currentEntity->origin, tvec );
+		}
+		Matrix3_TransformVector( rb.currentEntity->axis, tvec, rb.lightDir );
+	}
+
+	rb.dirtyUniformState = true;
 }
 
 /*
@@ -292,6 +325,7 @@ void RB_LoadObjectMatrix( const mat4_t m ) {
 void RB_LoadProjectionMatrix( const mat4_t m ) {
 	Matrix4_Copy( m, rb.projectionMatrix );
 	Matrix4_Multiply( m, rb.modelviewMatrix, rb.modelviewProjectionMatrix );
+	rb.dirtyUniformState = true;
 }
 
 /*
@@ -433,10 +467,17 @@ void RB_SetState( int state ) {
 	if( diff & GLSTATE_OFFSET_FILL ) {
 		if( state & GLSTATE_OFFSET_FILL ) {
 			qglEnable( GL_POLYGON_OFFSET_FILL );
+#ifdef GL_ES_VERSION_2_0
+			qglPolygonOffset( rb.gl.polygonfactor, 0 );
 			RB_DepthOffset( true );
+#else
+			qglPolygonOffset( rb.gl.polygonfactor, rb.gl.polygonunits );
+#endif
 		} else {
-			qglDisable( GL_POLYGON_OFFSET_FILL );
+#ifdef GL_ES_VERSION_2_0
 			RB_DepthOffset( false );
+#endif
+			qglDisable( GL_POLYGON_OFFSET_FILL );
 		}
 	}
 
@@ -578,6 +619,24 @@ void RB_Viewport( int x, int y, int w, int h ) {
 }
 
 /*
+* RB_GetViewport
+*/
+void RB_GetViewport( int *x, int *y, int *w, int *h ) {
+	if( x ) {
+		*x = rb.gl.viewport[0];
+	}
+	if( y ) {
+		*y = rb.gl.viewport[1];
+	}
+	if( w ) {
+		*w = rb.gl.viewport[2];
+	}
+	if( h ) {
+		*h = rb.gl.viewport[3];
+	}
+}
+
+/*
 * RB_Clear
 */
 void RB_Clear( int bits, float r, float g, float b, float a ) {
@@ -699,7 +758,7 @@ void RB_BindVBO( int id, int primitive ) {
 * RB_AddDynamicMesh
 */
 void RB_AddDynamicMesh( const entity_t *entity, const shader_t *shader,
-						const struct mfog_s *fog, const struct portalSurface_s *portalSurface, unsigned int shadowBits,
+						const struct mfog_s *fog, const struct portalSurface_s *portalSurface,
 						const struct mesh_s *mesh, int primitive, float x_offset, float y_offset ) {
 	int numVerts = mesh->numVerts, numElems = mesh->numElems;
 	bool trifan = false;
@@ -739,11 +798,10 @@ void RB_AddDynamicMesh( const entity_t *entity, const shader_t *shader,
 			renderFX = entity->renderfx;
 		}
 		if( ( ( shader->flags & SHADER_ENTITY_MERGABLE ) || ( prev->entity == entity ) ) && ( prevRenderFX == renderFX ) &&
-			( prev->shader == shader ) && ( prev->fog == fog ) && ( prev->portalSurface == portalSurface ) &&
-			( ( prev->shadowBits && shadowBits ) || ( !prev->shadowBits && !shadowBits ) ) ) {
+			( prev->shader == shader ) && ( prev->fog == fog ) && ( prev->portalSurface == portalSurface ) ) {
 			// don't rebind the shader to get the VBO in this case
 			streamId = prev->streamId;
-			if( ( prev->shadowBits == shadowBits ) && ( prev->primitive == primitive ) &&
+			if( ( prev->primitive == primitive ) &&
 				( prev->offset[0] == x_offset ) && ( prev->offset[1] == y_offset ) &&
 				!memcmp( prev->scissor, scissor, sizeof( scissor ) ) ) {
 				merge = true;
@@ -786,7 +844,6 @@ void RB_AddDynamicMesh( const entity_t *entity, const shader_t *shader,
 		draw->shader = shader;
 		draw->fog = fog;
 		draw->portalSurface = portalSurface;
-		draw->shadowBits = shadowBits;
 		draw->vattribs = vattribs;
 		draw->streamId = streamId;
 		draw->primitive = primitive;
@@ -802,7 +859,7 @@ void RB_AddDynamicMesh( const entity_t *entity, const shader_t *shader,
 
 	destVertOffset = stream->drawElements.firstVert + stream->drawElements.numVerts;
 	R_FillVBOVertexDataBuffer( stream->vbo, vattribs, mesh,
-							   stream->vertexData + destVertOffset * stream->vbo->vertexSize );
+							   stream->vertexData + destVertOffset * stream->vbo->vertexSize, 0 );
 
 	destElems = dynamicStreamElems[-streamId - 1] + stream->drawElements.firstElem + stream->drawElements.numElems;
 	if( trifan ) {
@@ -827,8 +884,8 @@ void RB_FlushDynamicMeshes( void ) {
 	rbDynamicStream_t *stream;
 	rbDynamicDraw_t *draw;
 	int sx, sy, sw, sh;
-	float offsetx = 0.0f, offsety = 0.0f, transx, transy;
-	mat4_t m;
+	float offsetx = 0.0f, offsety = 0.0f;
+	mat4_t om, m;
 
 	if( !numDraws ) {
 		return;
@@ -862,29 +919,26 @@ void RB_FlushDynamicMeshes( void ) {
 
 	RB_GetScissor( &sx, &sy, &sw, &sh );
 
-	Matrix4_Copy( rb.objectMatrix, m );
-	transx = m[12];
-	transy = m[13];
+	Matrix4_Copy( rb.objectMatrix, om );
 
 	for( i = 0, draw = rb.dynamicDraws; i < numDraws; i++, draw++ ) {
 		RB_BindShader( draw->entity, draw->shader, draw->fog );
 		RB_BindVBO( draw->streamId, draw->primitive );
 		RB_SetPortalSurface( draw->portalSurface );
-		RB_SetShadowBits( draw->shadowBits );
 		RB_Scissor( draw->scissor[0], draw->scissor[1], draw->scissor[2], draw->scissor[3] );
 
 		// translate the mesh in 2D
-		if( ( offsetx != draw->offset[0] ) || ( offsety != draw->offset[1] ) ) {
+		if( i == 0 || ( offsetx != draw->offset[0] ) || ( offsety != draw->offset[1] ) ) {
 			offsetx = draw->offset[0];
 			offsety = draw->offset[1];
-			m[12] = transx + offsetx;
-			m[13] = transy + offsety;
+
+			Matrix4_Copy( om, m );
+			Matrix4_Translate( m, draw->offset[0], draw->offset[1], 0 );
+
 			RB_LoadObjectMatrix( m );
 		}
 
 		RB_DrawElements(
-			draw->drawElements.firstVert, draw->drawElements.numVerts,
-			draw->drawElements.firstElem, draw->drawElements.numElems,
 			draw->drawElements.firstVert, draw->drawElements.numVerts,
 			draw->drawElements.firstElem, draw->drawElements.numElems );
 	}
@@ -893,12 +947,8 @@ void RB_FlushDynamicMeshes( void ) {
 
 	RB_Scissor( sx, sy, sw, sh );
 
-	// restore the original translation in the object matrix if it has been changed
-	if( offsetx || offsety ) {
-		m[12] = transx;
-		m[13] = transy;
-		RB_LoadObjectMatrix( m );
-	}
+	// restore the original translation in the object matrix
+	RB_LoadObjectMatrix( om );
 }
 
 /*
@@ -1016,6 +1066,14 @@ static void RB_EnableVertexAttribs( void ) {
 
 			lmattr++;
 		}
+
+		if( vattribs & VATTRIB_SURFINDEX_BIT ) {
+			RB_EnableVertexAttrib( VATTRIB_SURFINDEX, true );
+			qglVertexAttribPointerARB( VATTRIB_SURFINDEX, 1, FLOAT_VATTRIB_GL_TYPE( VATTRIB_SURFINDEX_BIT, hfa ),
+				GL_FALSE, vbo->vertexSize, ( const GLvoid * )vbo->siOffset );
+		} else {
+			RB_EnableVertexAttrib( VATTRIB_SURFINDEX, false );
+		}
 	}
 
 	if( ( vattribs & VATTRIB_INSTANCES_BITS ) == VATTRIB_INSTANCES_BITS ) {
@@ -1110,6 +1168,12 @@ void RB_DrawElementsReal( rbDrawElements_t *de ) {
 		rb.stats.c_totalDraws++;
 	}
 
+	if( rb.gl.state & GLSTATE_DEPTHWRITE ) {
+		rb.doneDepthPass = true;
+	}
+
+	rb.donePassesTotal++;
+
 	rb.stats.c_totalVerts += numVerts * numInstances;
 	if( rb.primitive == GL_TRIANGLES ) {
 		rb.stats.c_totalTris += numElems * numInstances / 3;
@@ -1145,8 +1209,7 @@ static void RB_DrawElements_( void ) {
 /*
 * RB_DrawElements
 */
-void RB_DrawElements( int firstVert, int numVerts, int firstElem, int numElems,
-					  int firstShadowVert, int numShadowVerts, int firstShadowElem, int numShadowElems ) {
+void RB_DrawElements( int firstVert, int numVerts, int firstElem, int numElems ) {
 	rb.currentVAttribs &= ~VATTRIB_INSTANCES_BITS;
 
 	rb.drawElements.numVerts = numVerts;
@@ -1154,12 +1217,6 @@ void RB_DrawElements( int firstVert, int numVerts, int firstElem, int numElems,
 	rb.drawElements.firstVert = firstVert;
 	rb.drawElements.firstElem = firstElem;
 	rb.drawElements.numInstances = 0;
-
-	rb.drawShadowElements.numVerts = numShadowVerts;
-	rb.drawShadowElements.numElems = numShadowElems;
-	rb.drawShadowElements.firstVert = firstShadowVert;
-	rb.drawShadowElements.firstElem = firstShadowElem;
-	rb.drawShadowElements.numInstances = 0;
 
 	RB_DrawElements_();
 }
@@ -1170,7 +1227,6 @@ void RB_DrawElements( int firstVert, int numVerts, int firstElem, int numElems,
 * Draws <numInstances> instances of elements
 */
 void RB_DrawElementsInstanced( int firstVert, int numVerts, int firstElem, int numElems,
-							   int firstShadowVert, int numShadowVerts, int firstShadowElem, int numShadowElems,
 							   int numInstances, instancePoint_t *instances ) {
 	if( !numInstances ) {
 		return;
@@ -1189,12 +1245,6 @@ void RB_DrawElementsInstanced( int firstVert, int numVerts, int firstElem, int n
 	rb.drawElements.firstVert = firstVert;
 	rb.drawElements.firstElem = firstElem;
 	rb.drawElements.numInstances = 0;
-
-	rb.drawShadowElements.numVerts = numShadowVerts;
-	rb.drawShadowElements.numElems = numShadowElems;
-	rb.drawShadowElements.firstVert = firstShadowVert;
-	rb.drawShadowElements.firstElem = firstShadowElem;
-	rb.drawShadowElements.numInstances = 0;
 
 	// check for vertex-attrib-divisor style instancing
 	if( glConfig.ext.instanced_arrays ) {
@@ -1218,7 +1268,6 @@ void RB_DrawElementsInstanced( int firstVert, int numVerts, int firstElem, int n
 	}
 
 	rb.drawElements.numInstances = numInstances;
-	rb.drawShadowElements.numInstances = numInstances;
 	RB_DrawElements_();
 }
 
@@ -1228,6 +1277,26 @@ void RB_DrawElementsInstanced( int firstVert, int numVerts, int firstElem, int n
 void RB_SetCamera( const vec3_t cameraOrigin, const mat3_t cameraAxis ) {
 	VectorCopy( cameraOrigin, rb.cameraOrigin );
 	Matrix3_Copy( cameraAxis, rb.cameraAxis );
+	rb.dirtyUniformState = true;
+}
+
+/*
+* RB_SetMode
+*/
+void RB_SetMode( int mode ) {
+	rb.mode = mode;
+	rb.dirtyUniformState = true;
+}
+
+/*
+* RB_SetSurfFlags
+*/
+void RB_SetSurfFlags( int flags ) {
+	if( rb.surfFlags == flags ) {
+		return;
+	}
+	rb.surfFlags = flags;
+	rb.dirtyUniformState = true;
 }
 
 /*
@@ -1235,6 +1304,7 @@ void RB_SetCamera( const vec3_t cameraOrigin, const mat3_t cameraAxis ) {
 */
 void RB_SetRenderFlags( int flags ) {
 	rb.renderFlags = flags;
+	rb.dirtyUniformState = true;
 }
 
 /*
@@ -1247,6 +1317,7 @@ bool RB_EnableTriangleOutlines( bool enable ) {
 
 	if( rb.triangleOutlines != enable ) {
 		rb.triangleOutlines = enable;
+		rb.dirtyUniformState = true;
 
 		// OpenGL ES systems don't support glPolygonMode
 #ifndef GL_ES_VERSION_2_0

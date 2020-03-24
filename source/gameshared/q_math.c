@@ -257,15 +257,9 @@ void AnglesToAxis( const vec3_t angles, mat3_t axis ) {
 // similar to MakeNormalVectors but for rotational matrices
 // (FIXME: weird, what's the diff between this and MakeNormalVectors?)
 void NormalVectorToAxis( const vec3_t forward, mat3_t axis ) {
-	VectorCopy( forward, &axis[0] );
-	if( forward[0] || forward[1] ) {
-		VectorSet( &axis[3], forward[1], -forward[0], 0 );
-		VectorNormalize( &axis[3] );
-		CrossProduct( &axis[0], &axis[3], &axis[6] );
-	} else {
-		VectorSet( &axis[3], 1, 0, 0 );
-		VectorSet( &axis[6], 0, 1, 0 );
-	}
+	VectorCopy( forward, &axis[AXIS_FORWARD] );
+	PerpendicularVector( &axis[AXIS_RIGHT], &axis[AXIS_FORWARD] );
+	CrossProduct( &axis[AXIS_FORWARD], &axis[AXIS_RIGHT], &axis[AXIS_UP] );
 }
 
 void BuildBoxPoints( vec3_t p[8], const vec3_t org, const vec3_t mins, const vec3_t maxs ) {
@@ -488,45 +482,40 @@ float anglemod( float a ) {
 }
 
 /*
-* CalcFov
+* WidescreenFov
 */
-float CalcFov( float fov_x, float width, float height ) {
-	float x;
-
-	if( fov_x < 1 || fov_x > 179 ) {
-		Sys_Error( "Bad fov: %f", fov_x );
-	}
-
-	x = width / tan( fov_x / 360 * M_PI );
-
-	return atan( height / x ) * 360 / M_PI;
+float WidescreenFov( float fov ) {
+	return atan( tan( (fov) / 360.0 * M_PI ) * (3.0 / 4.0) ) * (360.0 / M_PI);
 }
 
 /*
-* AdjustFov
+* CalcVerticalFov
 */
-void AdjustFov( float *fov_x, float *fov_y, float width, float height, bool lock_x ) {
-	float x, y;
+float CalcVerticalFov( float fov_x, float width, float height ) {
+	float x;
 
-	if( width * 3 == 4 * height || width * 4 == height * 5 || height > width ) {
-		// 4:3, 5:4 ratios or vertical display
-		return;
+	if( fov_x < 1 || fov_x > 179 ) {
+		Sys_Error( "Bad horizontal fov: %f", fov_x );
 	}
 
-	if( lock_x ) {
-		*fov_y = 2 * atan( ( width * 3 ) / ( height * 4 ) * tan( *fov_y * M_PI / 360.0 * 0.5 ) ) * 360 / M_PI;
-		return;
+	x = height;
+	x *= tan( fov_x / 360.0 * M_PI );
+	return atan( x / width ) * 360.0 / M_PI;
+}
+
+/*
+* CalcHorizontalFov
+*/
+float CalcHorizontalFov( float fov_y, float width, float height ) {
+	float x;
+
+	if( fov_y < 1 || fov_y > 179 ) {
+		Sys_Error( "Bad vertical fov: %f", fov_y );
 	}
 
-	y = CalcFov( *fov_x, 640, 480 );
-	x = *fov_x;
-
-	*fov_x = CalcFov( y, height, width );
-	if( *fov_x < x ) {
-		*fov_x = x;
-	} else {
-		*fov_y = y;
-	}
+	x = width;
+	x *= tan( fov_y / 360.0 * M_PI );
+	return atan( x / height ) * 360.0 / M_PI;
 }
 
 /*
@@ -669,6 +658,7 @@ void PlaneFromPoints( vec3_t verts[3], cplane_t *plane ) {
 	CrossProduct( v2, v1, plane->normal );
 	VectorNormalize( plane->normal );
 	plane->dist = DotProduct( verts[0], plane->normal );
+	plane->type = PLANE_NONAXIAL;
 }
 
 #define PLANE_NORMAL_EPSILON    0.00001
@@ -720,16 +710,21 @@ void SnapPlane( vec3_t normal, vec_t *dist ) {
 }
 
 void ClearBounds( vec3_t mins, vec3_t maxs ) {
-	mins[0] = mins[1] = mins[2] = 99999;
-	maxs[0] = maxs[1] = maxs[2] = -99999;
+	mins[0] = mins[1] = mins[2] = 999999;
+	maxs[0] = maxs[1] = maxs[2] = -999999;
 }
 
-bool BoundsIntersect( const vec3_t mins1, const vec3_t maxs1, const vec3_t mins2, const vec3_t maxs2 ) {
-	return (bool)( mins1[0] <= maxs2[0] && mins1[1] <= maxs2[1] && mins1[2] <= maxs2[2] &&
-				   maxs1[0] >= mins2[0] && maxs1[1] >= mins2[1] && maxs1[2] >= mins2[2] );
+void CopyBounds( const vec3_t inmins, const vec3_t inmaxs, vec3_t outmins, vec3_t outmaxs ) {
+	VectorCopy( inmins, outmins );
+	VectorCopy( inmaxs, outmaxs );
 }
 
-bool BoundsAndSphereIntersect( const vec3_t mins, const vec3_t maxs, const vec3_t centre, float radius ) {
+bool BoundsOverlap( const vec3_t mins1, const vec3_t maxs1, const vec3_t mins2, const vec3_t maxs2 ) {
+	return ( mins1[0] <= maxs2[0] && mins1[1] <= maxs2[1] && mins1[2] <= maxs2[2] &&
+		maxs1[0] >= mins2[0] && maxs1[1] >= mins2[1] && maxs1[2] >= mins2[2] );
+}
+
+bool BoundsOverlapSphere( const vec3_t mins, const vec3_t maxs, const vec3_t centre, float radius ) {
 	int i;
 	float dmin = 0;
 	float radius2 = radius * radius;
@@ -776,6 +771,136 @@ float RadiusFromBounds( const vec3_t mins, const vec3_t maxs ) {
 
 	return VectorLength( corner );
 }
+
+/*
+* BoundsCentre
+*/
+void BoundsCentre( const vec3_t mins, const vec3_t maxs, vec3_t centre ) {
+	VectorClear( centre );
+	VectorMA( centre, 0.5, mins, centre );
+	VectorMA( centre, 0.5, maxs, centre );
+}
+
+/*
+* LocalBounds
+*/
+float LocalBounds( const vec3_t inmins, const vec3_t inmaxs, vec3_t mins, vec3_t maxs, vec3_t centre ) {
+	vec3_t v, vmin, vmax;
+
+	BoundsCentre( inmins, inmaxs, v );
+	VectorSubtract( inmins, v, vmin );
+	VectorSubtract( inmaxs, v, vmax );
+
+	if( mins ) {
+		VectorCopy( vmin, mins );
+	}
+	if( maxs ) {
+		VectorCopy( vmax, maxs );
+	}
+	if( centre ) {
+		VectorCopy( v, centre );
+	}
+	return RadiusFromBounds( vmin, vmax );
+}
+
+/*
+* BoundsFromRadius
+*/
+void BoundsFromRadius( const vec3_t centre, vec_t radius, vec3_t mins, vec3_t maxs ) {
+	int i;
+
+	for( i = 0; i < 3; i++ ) {
+		mins[i] = centre[i] - radius;
+		maxs[i] = centre[i] + radius;
+	}
+}
+
+/*
+* ClipBounds
+*/
+void ClipBounds( vec3_t mins, vec3_t maxs, const vec3_t mins2, const vec3_t maxs2 ) {
+	int i;
+
+	for( i = 0; i < 3; i++ ) {
+		mins[i] = max( mins[i], mins2[i] );
+		maxs[i] = min( maxs[i], maxs2[i] );
+	}
+}
+
+/*
+* UnionBounds
+*/
+void UnionBounds( vec3_t mins, vec3_t maxs, const vec3_t mins2, const vec3_t maxs2 ) {
+	int i;
+
+	for( i = 0; i < 3; i++ ) {
+		mins[i] = min( mins[i], mins2[i] );
+		maxs[i] = max( maxs[i], maxs2[i] );
+	}
+}
+
+/*
+* BoundsCorners
+*/
+void BoundsCorners( const vec3_t mins, const vec3_t maxs, vec3_t corners[8] ) {
+	int j;
+
+	for( j = 0; j < 8; j++ ) {
+		corners[j][0] = ( ( j & 1 ) ? mins[0] : maxs[0] );
+		corners[j][1] = ( ( j & 2 ) ? mins[1] : maxs[1] );
+		corners[j][2] = ( ( j & 4 ) ? mins[2] : maxs[2] );
+	}
+}
+
+/*
+* BoundsOverlapTriangle
+*/
+bool BoundsOverlapTriangle( const vec3_t v1, const vec3_t v2, const vec3_t v3, const vec3_t mins, const vec3_t maxs ) {
+	const vec_t *a = v1, *b = v2, *c = v3;
+	vec3_t tmins = { min( a[0], min( b[0], c[0] ) ), min( a[1], min( b[1], c[1] ) ), min( a[2], min( b[2], c[2] ) ) };
+	vec3_t tmaxs = { max( a[0], max( b[0], c[0] ) ), max( a[1], max( b[1], c[1] ) ), max( a[2], max( b[2], c[2] ) ) };
+	return BoundsOverlap( tmins, tmaxs, mins, maxs );
+}
+
+/*
+* BoundsInsideBounds
+*/
+bool BoundsInsideBounds( const vec3_t mins1, const vec3_t maxs1, const vec3_t mins2, const vec3_t maxs2 ) {
+	const vec_t *a = mins1, *b = maxs1, *c = mins2, *d = maxs2;
+	return ( a[0] >= c[0] && b[0] <= d[0] && a[1] >= c[1]  && b[1] <= d[1] && a[2] >= c[2] && b[2] <= d[2] );
+}
+
+/*
+* BoundsNearestDistance
+*/
+vec_t BoundsNearestDistance( const vec3_t point, const vec3_t mins, const vec3_t maxs ) {
+	int i;
+	vec3_t nearestpoint;
+
+	for( i = 0; i < 3; i++ )
+		nearestpoint[i] = Q_bound( mins[i], point[i], maxs[i] );
+	return DistanceFast( nearestpoint, point );
+}
+
+/*
+* BoundsFurthestDistance
+*/
+vec_t BoundsFurthestDistance( const vec3_t point, const vec3_t mins, const vec3_t maxs ) {
+	int i;
+	vec3_t corners[8];
+	vec_t maxDist = 0;
+
+	BoundsCorners( mins, maxs, corners );
+
+	maxDist = 0;
+	for( i = 0; i < 8; i++ ) {
+		vec_t dist = DistanceSquared( point, corners[i] );
+		maxDist = max( maxDist, dist );
+	}
+
+	return sqrt( maxDist );
+}
+
 
 vec_t VectorNormalize( vec3_t v ) {
 	float length, ilength;
@@ -1449,4 +1574,80 @@ vec_t NormalCDF( vec_t x ) {
 
 vec_t NormalPDF( vec_t x ) {
 	return exp( ( -x * x ) / 2 ) / sqrt( 2.0 * M_PI );
+}
+
+//============================================================================
+
+/*
+* Q_InitNoiseTable
+*/
+void Q_InitNoiseTable( int seed, float *noisetable, int *noiseperm ) {
+	int i;
+	
+	srand( seed );
+
+	for( i = 0; i < NOISE_SIZE; i++ ) {
+		noisetable[i] = (float)( ( ( rand() / (float)RAND_MAX ) * 2.0 - 1.0 ) );
+		noiseperm[i] = (unsigned char)( rand() / (float)RAND_MAX * 255 );
+	}
+}
+
+/*
+* Q_GetNoiseValueFromTable
+*/
+float Q_GetNoiseValueFromTable( float *noisetable, int *noiseperm, float x, float y, float z, float t ) {
+	int i;
+	int ix, iy, iz, it;
+	float fx, fy, fz, ft;
+	float front[4], back[4];
+	float fvalue, bvalue, value[2], finalvalue;
+
+#define NOISE_VAL( a )    noiseperm[( a ) & ( NOISE_SIZE - 1 )]
+#define NOISE_INDEX( x, y, z, t ) NOISE_VAL( x + NOISE_VAL( y + NOISE_VAL( z + NOISE_VAL( t ) ) ) )
+#define NOISE_LERP( a, b, w ) ( a * ( 1.0f - w ) + b * w )
+
+	ix = ( int )floor( x );
+	fx = x - ix;
+	iy = ( int )floor( y );
+	fy = y - iy;
+	iz = ( int )floor( z );
+	fz = z - iz;
+	it = ( int )floor( t );
+	ft = t - it;
+
+	for( i = 0; i < 2; i++ ) {
+		front[0] = noisetable[NOISE_INDEX( ix, iy, iz, it + i )];
+		front[1] = noisetable[NOISE_INDEX( ix + 1, iy, iz, it + i )];
+		front[2] = noisetable[NOISE_INDEX( ix, iy + 1, iz, it + i )];
+		front[3] = noisetable[NOISE_INDEX( ix + 1, iy + 1, iz, it + i )];
+
+		back[0] = noisetable[NOISE_INDEX( ix, iy, iz + 1, it + i )];
+		back[1] = noisetable[NOISE_INDEX( ix + 1, iy, iz + 1, it + i )];
+		back[2] = noisetable[NOISE_INDEX( ix, iy + 1, iz + 1, it + i )];
+		back[3] = noisetable[NOISE_INDEX( ix + 1, iy + 1, iz + 1, it + i )];
+
+		fvalue = NOISE_LERP( NOISE_LERP( front[0], front[1], fx ), NOISE_LERP( front[2], front[3], fx ), fy );
+		bvalue = NOISE_LERP( NOISE_LERP( back[0], back[1], fx ), NOISE_LERP( back[2], back[3], fx ), fy );
+		value[i] = NOISE_LERP( fvalue, bvalue, fz );
+	}
+
+	finalvalue = NOISE_LERP( value[0], value[1], ft );
+
+	return finalvalue;
+}
+
+/*
+* Q_GetNoiseValue
+*/
+float Q_GetNoiseValue( float x, float y, float z, float t ) {
+	static int init;
+	static float noisetable[NOISE_SIZE];
+	static int noiseperm[NOISE_SIZE];
+
+	if( !init ) {
+		init = 1;
+		Q_InitNoiseTable( 2002, noisetable, noiseperm );
+	}
+
+	return Q_GetNoiseValueFromTable( noisetable, noiseperm, x, y, z, t );
 }

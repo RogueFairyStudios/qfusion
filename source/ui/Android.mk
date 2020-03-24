@@ -3,10 +3,12 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := ui
 LOCAL_MODULE_FILENAME := lib$(LOCAL_MODULE)_android_$(TARGET_ARCH_ABI)
 
-LOCAL_C_INCLUDES := $(QFUSION_PATH)/third-party/angelscript/sdk/angelscript/include $(LOCAL_PATH)
+LOCAL_C_INCLUDES := $(QFUSION_PATH)/third-party/angelscript/sdk/angelscript/include $(QFUSION_PATH)/third-party/nanosvg/src $(LOCAL_PATH)
 LOCAL_PCH := ui_precompiled.h
 
-LOCAL_STATIC_LIBRARIES := RocketCore RocketControls
+LOCAL_CFLAGS := $(LOCAL_EXPORT_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES := RmlUiCore RmlUiControls RmlUiDebugger
 
 LOCAL_SRC_FILES := \
   ../gameshared/q_math.c \

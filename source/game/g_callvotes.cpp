@@ -1955,15 +1955,17 @@ static void G_CallVotes_CheckState( void ) {
 			continue;
 		}
 
-		if( ( ent->r.svflags & SVF_FAKECLIENT ) || client->isTV ) {
+		if( ent->r.svflags & SVF_FAKECLIENT ) {
 			continue;
 		}
 
 		// ignore inactive players unless they have voted
-		if( client->level.last_activity &&
-			client->level.last_activity + ( g_inactivity_maxtime->value * 1000 ) < level.time &&
-			clientVoted[PLAYERNUM( ent )] == VOTED_NOTHING ) {
-			continue;
+		if( g_inactivity_maxtime->value > 0 ) {
+			if( client->level.last_activity &&
+				client->level.last_activity + ( g_inactivity_maxtime->value * 1000 ) < level.time &&
+				clientVoted[PLAYERNUM( ent )] == VOTED_NOTHING ) {
+				continue;
+			}
 		}
 
 		if( callvoteState.vote.callvote->need_auth && sv_mm_enable->integer ) {
@@ -2023,7 +2025,7 @@ void G_CallVotes_CmdVote( edict_t *ent ) {
 	if( !ent->r.client ) {
 		return;
 	}
-	if( ( ent->r.svflags & SVF_FAKECLIENT ) || ent->r.client->isTV ) {
+	if( ent->r.svflags & SVF_FAKECLIENT ) {
 		return;
 	}
 
@@ -2131,7 +2133,7 @@ static void G_CallVote( edict_t *ent, bool isopcall ) {
 
 			for( i = 0; i < teamlist[team].numplayers; i++ ) {
 				e = game.edicts + teamlist[team].playerIndices[i];
-				if( e->r.inuse && e->r.svflags & SVF_FAKECLIENT ) {
+				if( e->r.inuse && ( e->r.svflags & SVF_FAKECLIENT ) ) {
 					count++;
 				}
 			}
@@ -2257,7 +2259,7 @@ static void G_CallVote( edict_t *ent, bool isopcall ) {
 * G_CallVote_Cmd
 */
 void G_CallVote_Cmd( edict_t *ent ) {
-	if( ( ent->r.svflags & SVF_FAKECLIENT ) || ent->r.client->isTV ) {
+	if( ent->r.svflags & SVF_FAKECLIENT ) {
 		return;
 	}
 	G_CallVote( ent, false );
@@ -2273,7 +2275,7 @@ void G_OperatorVote_Cmd( edict_t *ent ) {
 	if( !ent->r.client ) {
 		return;
 	}
-	if( ( ent->r.svflags & SVF_FAKECLIENT ) || ent->r.client->isTV ) {
+	if( ent->r.svflags & SVF_FAKECLIENT ) {
 		return;
 	}
 
@@ -2306,7 +2308,7 @@ void G_OperatorVote_Cmd( edict_t *ent ) {
 			if( !other->r.inuse || trap_GetClientState( PLAYERNUM( other ) ) < CS_SPAWNED ) {
 				continue;
 			}
-			if( ( other->r.svflags & SVF_FAKECLIENT ) || other->r.client->isTV ) {
+			if( other->r.svflags & SVF_FAKECLIENT ) {
 				continue;
 			}
 
@@ -2347,22 +2349,6 @@ void G_OperatorVote_Cmd( edict_t *ent ) {
 		G_Teams_SetTeam( playerEnt, newTeam );
 		G_PrintMsg( NULL, "%s was moved to team %s by %s.\n", playerEnt->r.client->netname, GS_TeamName( newTeam ), ent->r.client->netname );
 
-		return;
-	}
-
-	if( !Q_stricmp( trap_Cmd_Argv( 1 ), "specstotv" ) ) {
-		for( other = game.edicts + 1; PLAYERNUM( other ) < gs.maxclients; other++ ) {
-			if( !other->r.inuse || trap_GetClientState( PLAYERNUM( other ) ) < CS_SPAWNED ) {
-				continue;
-			}
-			if( other->r.client->isoperator ) {
-				continue;
-			}
-			if( other->s.team != TEAM_SPECTATOR ) {
-				continue;
-			}
-			G_MoveClientToTV( other );
-		}
 		return;
 	}
 

@@ -33,6 +33,8 @@
 #include "../ref_gl/r_local.h"
 #include "win_glw.h"
 
+#define BORDERLESS_CLIENT_AREA_HACK
+
 #define WINDOW_STYLE    ( WS_OVERLAPPED | WS_BORDER | WS_CAPTION | WS_VISIBLE | WS_SYSMENU | WS_MINIMIZEBOX )
 
 static bool GLimp_InitGL( void );
@@ -49,80 +51,72 @@ glwstate_t glw_state;
 static int GLimp_GetWindowStyle( bool fullscreen, bool borderless, int *pexstyle ) {
 	int stylebits;
 	int exstyle;
-	HWND parentHWND = glw_state.parenthWnd;
 
 	if( fullscreen ) {
 		exstyle = WS_EX_TOPMOST;
 		stylebits = ( WS_POPUP | WS_VISIBLE );
-		parentHWND = NULL;
-	} else {
-		if( parentHWND ) {
-			exstyle = 0;
-			stylebits = WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_VISIBLE;
-		} else {
-			exstyle = 0;
-			stylebits = WINDOW_STYLE;
+
+#ifdef BORDERLESS_CLIENT_AREA_HACK
+		// create a "borderless" fullscreen window with caption and borders due 
+		// to a Windows bug which messes up the OpenGL viewport on Alt+Enter when 
+		// entering windowed mode if the app started in borderless fullscreen
+		if( borderless ) {
+			stylebits |= WS_BORDER | WS_CAPTION;
 		}
+#endif
+	} else {
+		exstyle = 0;
+		stylebits = WINDOW_STYLE;
 	}
 
 	*pexstyle = exstyle;
-
 	return stylebits;
 }
 
-static void GLimp_SetWindowSize( bool fullscreen, bool borderless ) {
+static void GLimp_AdjustWindowPosAndSize( int stylebits, int exstyle, int *x, int *y, int *width, int *height ) {
 	RECT r;
+
+	r.left = 0;
+	r.top  = 0;
+	r.right  = *width;
+	r.bottom = *height;
+
+	AdjustWindowRectEx( &r, stylebits, FALSE, exstyle );
+
+	*x = *x + r.left;
+	*y = *y + r.top;
+	*width = r.right - r.left;
+	*height = r.bottom - r.top;
+}
+
+static void GLimp_SetWindowStyleAndPos( int x, int y, int width, int height, bool fullscreen, bool borderless ) {
 	int stylebits;
 	int exstyle;
-	int x = glw_state.win_x, y = glw_state.win_y;
-	int width = glConfig.width, height = glConfig.height;
-	HWND parentHWND = glw_state.parenthWnd;
 
 	if( !glw_state.hWnd ) {
 		return;
 	}
 
-	r.left = 0;
-	r.top = 0;
-	r.right  = width;
-	r.bottom = height;
-
 	stylebits = GLimp_GetWindowStyle( fullscreen, borderless, &exstyle );
 
-	AdjustWindowRect( &r, stylebits, FALSE );
-
-	width = r.right - r.left;
-	height = r.bottom - r.top;
-
 	if( fullscreen ) {
-		x = 0;
-		y = 0;
-	} else if( parentHWND ) {
-		RECT parentWindowRect;
-
-		GetWindowRect( parentHWND, &parentWindowRect );
-
-		// share centre with the parent window
-		x = ( parentWindowRect.right - parentWindowRect.left - width ) / 2;
-		y = ( parentWindowRect.bottom - parentWindowRect.top - height ) / 2;
+		x = y = 0;
 	}
 
-	SetActiveWindow( glw_state.hWnd );
+#ifdef BORDERLESS_CLIENT_AREA_HACK
+	if( !fullscreen || borderless ) {
+#else
+	else {
+#endif
+		GLimp_AdjustWindowPosAndSize( stylebits, exstyle, &x, &y, &width, &height );
+	}
 
 	SetWindowLong( glw_state.hWnd, GWL_EXSTYLE, exstyle );
 	SetWindowLong( glw_state.hWnd, GWL_STYLE, stylebits );
-
-	SetWindowPos( glw_state.hWnd, HWND_TOP, x, y, width, height, SWP_FRAMECHANGED );
-
-	ShowWindow( glw_state.hWnd, SW_SHOW );
-	UpdateWindow( glw_state.hWnd );
-
-	SetForegroundWindow( glw_state.hWnd );
-	SetFocus( glw_state.hWnd );
+	SetWindowPos( glw_state.hWnd, NULL, x, y, width, height, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_SHOWWINDOW );
 }
 
-static void GLimp_CreateWindow( bool dummy ) {
-	HWND parentHWND = glw_state.parenthWnd;
+static void GLimp_CreateWindow( bool dummy, int x, int y, int width, int height, bool borderless ) {
 #ifdef WITH_UTF8
 	WNDCLASSW wc;
 #else
@@ -170,7 +164,7 @@ static void GLimp_CreateWindow( bool dummy ) {
 #endif
 			0,
 			0, 0, 0, 0,
-			parentHWND,
+			NULL,
 			NULL,
 			glw_state.hInstance,
 			NULL );
@@ -180,16 +174,14 @@ static void GLimp_CreateWindow( bool dummy ) {
 	}
 
 	if( !dummy ) {
-		GLimp_SetWindowSize( glConfig.fullScreen, glConfig.borderless );
+		GLimp_SetWindowStyleAndPos( x, y, width, height, false, borderless );
 	}
 }
 
 /*
-** GLimp_SetFullscreenMode
+** GLimp_SetFullscreen
 */
-rserr_t GLimp_SetFullscreenMode( int displayFrequency, bool fullscreen ) {
-	glConfig.fullScreen = false;
-
+rserr_t GLimp_SetFullscreen( bool fullscreen, int xpos, int ypos ) {
 	// do a CDS if needed
 	if( fullscreen && !glConfig.borderless ) {
 		int a;
@@ -205,27 +197,22 @@ rserr_t GLimp_SetFullscreenMode( int displayFrequency, bool fullscreen ) {
 		dm.dmPelsHeight = glConfig.height;
 		dm.dmFields     = DM_PELSWIDTH | DM_PELSHEIGHT;
 
-		if( displayFrequency > 0 ) {
-			dm.dmFields |= DM_DISPLAYFREQUENCY;
-			dm.dmDisplayFrequency = displayFrequency;
-			ri.Com_Printf( "...using display frequency %i\n", dm.dmDisplayFrequency );
-		}
-
 		ri.Com_Printf( "...calling CDS: " );
 		a = ChangeDisplaySettings( &dm, CDS_FULLSCREEN );
 		if( a == DISP_CHANGE_SUCCESSFUL ) {
 			ri.Com_Printf( "ok\n" );
 			glConfig.fullScreen = true;
-			GLimp_SetWindowSize( true, glConfig.borderless );
+			GLimp_SetWindowStyleAndPos( xpos, ypos, glConfig.width, glConfig.height, true, false );
 			return rserr_ok;
 		}
 
 		ri.Com_Printf( "failed: %x\n", a );
+		glConfig.fullScreen = false;
 		return rserr_invalid_fullscreen;
 	}
 
 	ChangeDisplaySettings( 0, 0 );
-	GLimp_SetWindowSize( fullscreen, glConfig.borderless );
+	GLimp_SetWindowStyleAndPos( xpos, ypos, glConfig.width, glConfig.height, fullscreen, glConfig.borderless );
 	glConfig.fullScreen = fullscreen;
 
 	return rserr_ok;
@@ -234,21 +221,10 @@ rserr_t GLimp_SetFullscreenMode( int displayFrequency, bool fullscreen ) {
 /*
 ** GLimp_SetMode
 */
-rserr_t GLimp_SetMode( int x, int y, int width, int height, int displayFrequency, bool fullscreen, bool stereo, bool borderless ) {
+rserr_t GLimp_SetMode( int x, int y, int width, int height, bool fullscreen, bool stereo, bool borderless ) {
 	const char *win_fs[] = { "W", "FS" };
 
 	ri.Com_Printf( "Setting video mode:" );
-
-	// disable fullscreen if rendering to a parent window
-	if( glw_state.parenthWnd ) {
-		RECT parentWindowRect;
-
-		fullscreen = false;
-
-		GetWindowRect( glw_state.parenthWnd, &parentWindowRect );
-		width = parentWindowRect.right - parentWindowRect.left;
-		height = parentWindowRect.bottom - parentWindowRect.top;
-	}
 
 	ri.Com_Printf( " %d %d %s\n", width, height, win_fs[fullscreen] );
 
@@ -257,15 +233,12 @@ rserr_t GLimp_SetMode( int x, int y, int width, int height, int displayFrequency
 		GLimp_Shutdown();
 	}
 
-	glw_state.win_x = x;
-	glw_state.win_y = y;
-
 	glConfig.width = width;
 	glConfig.height = height;
 	glConfig.stereoEnabled = stereo;
 	glConfig.borderless = borderless;
 
-	GLimp_SetFullscreenMode( displayFrequency, fullscreen );
+	GLimp_SetFullscreen( fullscreen, x, y );
 
 	if( r_stencilbits->integer == 8 || r_stencilbits->integer == 16 ) {
 		glConfig.stencilBits = r_stencilbits->integer;
@@ -273,13 +246,15 @@ rserr_t GLimp_SetMode( int x, int y, int width, int height, int displayFrequency
 		glConfig.stencilBits = 0;
 	}
 
-	GLimp_CreateWindow( false );
+	GLimp_CreateWindow( false, x, y, width, height, borderless );
 
 	// init all the gl stuff for the window
 	if( !GLimp_InitGL() ) {
 		ri.Com_Printf( "GLimp_CreateWindow() - GLimp_InitGL failed\n" );
 		return false;
 	}
+
+	GLimp_SetFullscreen( glConfig.fullScreen, x, y );
 
 	return ( fullscreen == glConfig.fullScreen ? rserr_ok : rserr_invalid_fullscreen );
 }
@@ -338,9 +313,6 @@ void GLimp_Shutdown( void ) {
 
 	glw_state.applicationIconResourceID = 0;
 
-	glw_state.win_x = 0;
-	glw_state.win_y = 0;
-
 	glConfig.width = 0;
 	glConfig.height = 0;
 }
@@ -366,7 +338,6 @@ static int GLimp_Init_( const char *applicationName, void *hinstance, void *wndp
 #endif
 	glw_state.hInstance = ( HINSTANCE ) hinstance;
 	glw_state.wndproc = wndproc;
-	glw_state.parenthWnd = ( HWND )parenthWnd;
 	glw_state.applicationIconResourceID = iconResource;
 
     // create a temporary window and startup temporary OpenGL context
@@ -374,7 +345,7 @@ static int GLimp_Init_( const char *applicationName, void *hinstance, void *wndp
 	if( needPixelFormatARB ) {
 		const char *wglExtensions;
 
-		GLimp_CreateWindow( true );
+		GLimp_CreateWindow( true, 0, 0, 0, 0, true );
 
 		if( !GLimp_InitGL() ) {
 			return false;

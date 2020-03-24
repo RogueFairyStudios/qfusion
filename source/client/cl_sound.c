@@ -136,9 +136,9 @@ static bool CL_SoundModule_Load( const char *name, sound_import_t *import, bool 
 		Com_Printf( "Loading sound module: %s\n", name );
 	}
 
-	file_size = strlen( LIB_DIRECTORY "/" LIB_PREFIX "snd_" ) + strlen( name ) + 1 + strlen( ARCH ) + strlen( LIB_SUFFIX ) + 1;
+	file_size = strlen( LIB_DIRECTORY "/" LIB_PREFIX "snd_" ) + strlen( name ) + strlen( LIB_SUFFIX ) + 1;
 	file = Mem_TempMalloc( file_size );
-	Q_snprintfz( file, file_size, LIB_DIRECTORY "/" LIB_PREFIX "snd_%s_" ARCH LIB_SUFFIX, name );
+	Q_snprintfz( file, file_size, LIB_DIRECTORY "/" LIB_PREFIX "snd_%s" LIB_SUFFIX, name );
 
 	funcs[0].name = "GetSoundAPI";
 	funcs[0].funcPointer = ( void ** )&GetSoundAPI;
@@ -282,8 +282,8 @@ void CL_SoundModule_Init( bool verbose ) {
 	import.BufPipe_ReadCmds = QBufPipe_ReadCmds;
 	import.BufPipe_Wait = QBufPipe_Wait;
 
-	sm = bound( 1, s_module->integer, num_sound_modules );
-	smfb = bound( 0, s_module_fallback->integer, num_sound_modules );
+	sm = Q_bound( 1, s_module->integer, num_sound_modules );
+	smfb = Q_bound( 0, s_module_fallback->integer, num_sound_modules );
 
 	if( !CL_SoundModule_Load( sound_modules[sm - 1], &import, verbose ) ) {
 		if( s_module->integer == smfb || !smfb ||
@@ -381,7 +381,6 @@ void CL_SoundModule_Update( const vec3_t origin, const vec3_t velocity, const ma
 	if( se ) {
 		se->Update( origin, velocity, axis, avidump );
 	}
-	CL_Mumble_Update( origin, axis, identity );
 }
 
 /*
@@ -577,125 +576,3 @@ void CL_SoundModule_StopAviDemo( void ) {
 	}
 }
 
-/*
-=======================================================================
-
-MUMBLE SUPPORT
-
-=======================================================================
-*/
-
-#ifdef MUMBLE_SUPPORT
-
-#include "libmumblelink/libmumblelink.h"
-
-static cvar_t *cl_mumble;
-static cvar_t *cl_mumble_scale;
-
-/*
-* CL_Mumble_Init
-*/
-void CL_Mumble_Init( void ) {
-	cl_mumble =         Cvar_Get( "cl_mumble", "0", CVAR_ARCHIVE | CVAR_LATCH );
-	cl_mumble_scale =   Cvar_Get( "cl_mumble_scale", "0.0254", CVAR_ARCHIVE );
-}
-
-/*
-* CL_Mumble_Link
-*/
-void CL_Mumble_Link( void ) {
-	if( !cl_mumble->integer ) {
-		return;
-	}
-
-	if( !mumble_islinked() ) {
-		int ret = mumble_link( APPLICATION );
-		Com_Printf( "Mumble: Linking to Mumble application %s\n", ret == 0 ? "ok" : "failed" );
-	}
-}
-
-/*
-* CL_Mumble_Unlink
-*/
-void CL_Mumble_Unlink( void ) {
-	if( !cl_mumble->integer ) {
-		return;
-	}
-
-	if( mumble_islinked() ) {
-		Com_Printf( "Mumble: Unlinking from Mumble application\n" );
-		mumble_unlink();
-	}
-}
-
-/*
-* CL_Mumble_Update
-*/
-void CL_Mumble_Update( const vec3_t origin, const mat3_t axis, const char *identity ) {
-	vec3_t mp, mf, mt;
-	char context[256];
-
-	if( !cl_mumble->integer ) {
-		return;
-	}
-	if( !identity ) {
-		return;
-	}
-
-	VectorScale( origin, cl_mumble_scale->value, mp );
-	VectorCopy( &axis[AXIS_FORWARD], mf );
-	VectorCopy( &axis[AXIS_UP], mt );
-
-	if( cl_mumble->integer == 2 ) {
-		Com_Printf( "MumbleUpdate:\n%f, %f, %f\n%f, %f, %f\n%f, %f, %f", mp[0], mp[1], mp[2], mf[0], mf[1], mf[2], mt[0], mt[1], mt[2] );
-	}
-
-	mumble_update_coordinates( mp, mf, mt );
-
-	// for Mumble 1.2+  http://mumble.sourceforge.net/Link
-	mumble_set_identity( identity );
-
-	// TODO: add team to context?
-	Q_strncpyz( context, NET_AddressToString( &cls.serveraddress ), sizeof( context ) );
-	mumble_set_context( ( const unsigned char * )context, strlen( context ) + 1 );
-}
-
-/*
-* CL_Mumble_Shutdown
-*/
-void CL_Mumble_Shutdown( void ) {
-}
-
-#else
-
-/*
-* CL_Mumble_Init
-*/
-void CL_Mumble_Init( void ) {
-}
-
-/*
-* CL_Mumble_Link
-*/
-void CL_Mumble_Link( void ) {
-}
-
-/*
-* CL_Mumble_Unlink
-*/
-void CL_Mumble_Unlink( void ) {
-}
-
-/*
-* CL_Mumble_Update
-*/
-void CL_Mumble_Update( const vec3_t origin, const mat3_t axis, const char *identity ) {
-}
-
-/*
-* CL_Mumble_Shutdown
-*/
-void CL_Mumble_Shutdown( void ) {
-}
-
-#endif

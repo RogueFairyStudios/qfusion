@@ -27,7 +27,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "../gameshared/q_math.h"
 #include "../gameshared/q_shared.h"
 #include "../gameshared/q_cvar.h"
-#include "../gameshared/q_dynvar.h"
 #include "../gameshared/q_comref.h"
 #include "../gameshared/q_collision.h"
 
@@ -92,6 +91,7 @@ void MSG_WriteHalfFloat( msg_t *sb, float f );
 void MSG_WriteString( msg_t *sb, const char *s );
 #define MSG_WriteAngle16( sb, f ) ( MSG_WriteInt16( ( sb ), ANGLE2SHORT( ( f ) ) ) )
 void MSG_WriteDeltaUsercmd( msg_t *sb, const struct usercmd_s *from, struct usercmd_s *cmd );
+void MSG_WriteEntityNumber( msg_t *msg, int number, bool remove, unsigned byteMask );
 void MSG_WriteDeltaEntity( msg_t *msg, const struct entity_state_s *from, const struct entity_state_s *to, bool force );
 void MSG_WriteDeltaPlayerState( msg_t *msg, const player_state_t *ops, const player_state_t *ps );
 void MSG_WriteDeltaGameState( msg_t *msg, const game_state_t *from, const game_state_t *to );
@@ -136,10 +136,7 @@ void Com_FreePureList( purelist_t **purelist );
 
 //============================================================================
 
-#define SNAP_MAX_DEMO_META_DATA_SIZE    16 * 1024
-
-// define this 0 to disable compression of demo files
-#define SNAP_DEMO_GZ                    FS_GZ
+#define SNAP_MAX_DEMO_META_DATA_SIZE    4 * 1024
 
 void SNAP_ParseBaseline( msg_t *msg, entity_state_t *baselines );
 void SNAP_SkipFrame( msg_t *msg, struct snapshot_s *header );
@@ -215,7 +212,6 @@ PROTOCOL
 #define PORT_MASTER_STEAM   27011
 #define PORT_SERVER         44400
 #define PORT_HTTP_SERVER    44444
-#define PORT_TV_SERVER      44440
 #define PORT_MATCHMAKER     46002
 #define NUM_BROADCAST_PORTS 5
 
@@ -274,9 +270,8 @@ enum clc_ops_e {
 // serverdata flags
 #define SV_BITFLAGS_PURE            ( 1 << 0 )
 #define SV_BITFLAGS_RELIABLE        ( 1 << 1 )
-#define SV_BITFLAGS_TVSERVER        ( 1 << 2 )
-#define SV_BITFLAGS_HTTP            ( 1 << 3 )
-#define SV_BITFLAGS_HTTP_BASEURL    ( 1 << 4 )
+#define SV_BITFLAGS_HTTP            ( 1 << 2 )
+#define SV_BITFLAGS_HTTP_BASEURL    ( 1 << 3 )
 
 // framesnap flags
 #define FRAMESNAP_FLAG_DELTA        ( 1 << 0 )
@@ -385,16 +380,6 @@ CVAR
 #include "cvar.h"
 
 /*
-==========================================================
-
-DYNVAR
-
-==========================================================
-*/
-
-#include "dynvar.h"
-
-/*
 ==============================================================
 
 NET
@@ -402,18 +387,14 @@ NET
 ==============================================================
 */
 
-// net.h -- quake's interface to the networking layer
-
-#define PACKET_HEADER           10          // two ints, and a short
+// net.h -- qfusion's interface to the networking layer
 
 #define MAX_RELIABLE_COMMANDS   64          // max string commands buffered for restransmit
 #define MAX_PACKETLEN           1400        // max size of a network packet
 #define MAX_MSGLEN              32768       // max length of a message, which may be fragmented into multiple packets
+#define MIN_COMPRESS_PACKETLEN  96          // if the packet len falls below this threshold, no data compression will occur for this packet
 
-// wsw: Medar: doubled the MSGLEN as a temporary solution for multiview on bigger servers
 #define FRAGMENT_SIZE           ( MAX_PACKETLEN - 96 )
-#define FRAGMENT_LAST       (    1 << 14 )
-#define FRAGMENT_BIT            ( 1 << 31 )
 
 typedef enum {
 	NA_NOTRANSMIT,      // wsw : jal : fakeclients
@@ -648,9 +629,6 @@ int     FS_Flush( int file );
 bool    FS_IsUrl( const char *url );
 int     FS_FileNo( int file, size_t *offset );
 
-void    FS_SetCompressionLevel( int file, int level );
-int     FS_GetCompressionLevel( int file );
-
 // file loading
 int     FS_LoadFileExt( const char *path, int flags, void **buffer, void *stack, size_t stackSize, const char *filename, int fileline );
 int     FS_LoadBaseFileExt( const char *path, int flags, void **buffer, void *stack, size_t stackSize, const char *filename, int fileline );
@@ -858,7 +836,6 @@ NON-PORTABLE SYSTEM SERVICES
 #define SFF_SYSTEM  0x10
 
 void    Sys_Init( void );
-void    Sys_InitDynvars( void );
 
 void    Sys_AppActivate( void );
 

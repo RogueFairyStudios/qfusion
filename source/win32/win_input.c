@@ -18,25 +18,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 */
 // in_win.c -- windows mouse and joystick code
-// 02/21/97 JCB Added extended DirectInput code to support external controllers.
 
 #include "../client/client.h"
 #include "winquake.h"
 
-//#ifdef __GNUC__
-#define DIRECTINPUT_VERSION 0x0700 // Could use dx9, but older is more frequently used
-//#else
-//#define	DIRECTINPUT_VERSION 0x0800
-//#endif
-
-#include <dinput.h>
 #include <xinput.h>
-
-#define DINPUT_BUFFERSIZE           64 // http://www.esreality.com/?a=post&id=905276#pid905330
-#define iDirectInputCreate( a, b, c, d ) pDirectInputCreate( a, b, c, d )
-
-static HRESULT( WINAPI * pDirectInputCreate )( HINSTANCE hinst, DWORD dwVersion,
-											   LPDIRECTINPUT * lplpDirectInput, LPUNKNOWN punkOuter );
 
 // raw input specific defines
 #define MAX_RI_DEVICE_SIZE 128
@@ -85,10 +71,7 @@ static void     IN_RawInput_DeRegister( void );
 
 extern int64_t sys_msg_time;
 
-cvar_t *in_mouse;
-cvar_t *in_grabinconsole;
-
-bool in_appactive;
+bool in_appactive, in_showcursor;
 
 // forward-referenced functions
 static void IN_XInput_Init( void );
@@ -119,61 +102,13 @@ static unsigned int mstate_di;
 static int window_center_x, window_center_y;
 static RECT window_rect;
 
-static LPDIRECTINPUT g_pdi;
-static LPDIRECTINPUTDEVICE g_pMouse;
-
-static HINSTANCE hInstDI;
-
-static bool dinput_initialized;
-static bool dinput_acquired;
-
-// replacement for dxguid.lib which is not available in latest Windows SDKs for XP
-static const GUID qGUID_XAxis =     { 0xa36d02e0, 0xc9f3, 0x11cf, { 0xbf, 0xc7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00 } };
-static const GUID qGUID_YAxis =     { 0xa36d02e1, 0xc9f3, 0x11cf, { 0xbf, 0xc7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00 } };
-static const GUID qGUID_ZAxis =     { 0xa36d02e2, 0xc9f3, 0x11cf, { 0xbf, 0xc7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00 } };
-static const GUID qGUID_SysMouse =  { 0x6f1d2b60, 0xd5a0, 0x11cf, { 0xbf, 0xc7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00 } };
-
-typedef struct MYDATA {
-	LONG lX;                // X axis goes here
-	LONG lY;                // Y axis goes here
-	LONG lZ;                // Z axis goes here
-	BYTE bButtonA;          // One button goes here
-	BYTE bButtonB;          // Another button goes here
-	BYTE bButtonC;          // Another button goes here
-	BYTE bButtonD;          // Another button goes here
-	BYTE bButtonE;          // Another button goes here
-	BYTE bButtonF;          // Another button goes here
-	BYTE bButtonG;          // Another button goes here
-	BYTE bButtonH;          // Another button goes here
-} MYDATA;
-
-// This structure corresponds to c_dfDIMouse2 in dinput8.lib
-// 0x80000000 is something undocumented but must be there, otherwise
-// IDirectInputDevice_SetDataFormat may fail.
-static DIOBJECTDATAFORMAT rgodf[] = {
-	{ &qGUID_XAxis, FIELD_OFFSET( MYDATA, lX ), DIDFT_AXIS | DIDFT_ANYINSTANCE, 0, },
-	{ &qGUID_YAxis, FIELD_OFFSET( MYDATA, lY ), DIDFT_AXIS | DIDFT_ANYINSTANCE, 0, },
-	{ &qGUID_ZAxis, FIELD_OFFSET( MYDATA, lZ ), 0x80000000 | DIDFT_AXIS | DIDFT_ANYINSTANCE, 0, },
-	{ 0, FIELD_OFFSET( MYDATA, bButtonA ), DIDFT_BUTTON | DIDFT_ANYINSTANCE, 0, },
-	{ 0, FIELD_OFFSET( MYDATA, bButtonB ), DIDFT_BUTTON | DIDFT_ANYINSTANCE, 0, },
-	{ 0, FIELD_OFFSET( MYDATA, bButtonC ), 0x80000000 | DIDFT_BUTTON | DIDFT_ANYINSTANCE, 0, },
-	{ 0, FIELD_OFFSET( MYDATA, bButtonD ), 0x80000000 | DIDFT_BUTTON | DIDFT_ANYINSTANCE, 0, },
-	{ 0, FIELD_OFFSET( MYDATA, bButtonE ), 0x80000000 | DIDFT_BUTTON | DIDFT_ANYINSTANCE, 0, },
-	{ 0, FIELD_OFFSET( MYDATA, bButtonF ), 0x80000000 | DIDFT_BUTTON | DIDFT_ANYINSTANCE, 0, },
-	{ 0, FIELD_OFFSET( MYDATA, bButtonG ), 0x80000000 | DIDFT_BUTTON | DIDFT_ANYINSTANCE, 0, },
-	{ 0, FIELD_OFFSET( MYDATA, bButtonH ), 0x80000000 | DIDFT_BUTTON | DIDFT_ANYINSTANCE, 0, },
-};
-
-#define NUM_OBJECTS ( sizeof( rgodf ) / sizeof( rgodf[0] ) )
-
-static DIDATAFORMAT df = {
-	sizeof( DIDATAFORMAT ), // this structure
-	sizeof( DIOBJECTDATAFORMAT ), // size of object data format
-	DIDF_RELAXIS,           // absolute axis coordinates
-	sizeof( MYDATA ),       // device data size
-	NUM_OBJECTS,            // number of objects
-	rgodf,                  // and here they are
-};
+static void IN_ShowCursor( void ) {
+	if( in_showcursor ) {
+		while( ShowCursor( TRUE ) < 0 ) ;
+	} else {
+		while( ShowCursor( FALSE ) >= 0 ) ;
+	}
+}
 
 /*
 * IN_ActivateMouse
@@ -181,13 +116,7 @@ static DIDATAFORMAT df = {
 * Called when the window gains focus or changes in some way
 */
 static void IN_ActivateMouse( void ) {
-	int width, height;
-
 	if( !mouseinitialized ) {
-		return;
-	}
-	if( !in_mouse->integer ) {
-		mouseactive = false;
 		return;
 	}
 	if( mouseactive ) {
@@ -195,23 +124,6 @@ static void IN_ActivateMouse( void ) {
 	}
 
 	mouseactive = true;
-
-	if( dinput_initialized ) {
-		mstate_di = 0;
-		if( g_pMouse ) {
-			if( cl_hwnd ) {
-				if( FAILED( IDirectInputDevice_SetCooperativeLevel( g_pMouse, cl_hwnd, DISCL_EXCLUSIVE | DISCL_FOREGROUND ) ) ) {
-					Com_DPrintf( "Couldn't set DI coop level\n" );
-					return;
-				}
-			}
-			if( !dinput_acquired ) {
-				IDirectInputDevice_Acquire( g_pMouse );
-				dinput_acquired = true;
-			}
-		}
-		return;
-	}
 
 	if( rawinput_initialized ) {
 		if( IN_RawInput_Register() ) {
@@ -226,31 +138,10 @@ static void IN_ActivateMouse( void ) {
 		restore_spi = SystemParametersInfo( SPI_SETMOUSE, 0, newmouseparms, 0 );
 	}
 
-	width = GetSystemMetrics( SM_CXSCREEN );
-	height = GetSystemMetrics( SM_CYSCREEN );
-
-	GetWindowRect( cl_hwnd, &window_rect );
-	if( window_rect.left < 0 ) {
-		window_rect.left = 0;
-	}
-	if( window_rect.top < 0 ) {
-		window_rect.top = 0;
-	}
-	if( window_rect.right >= width ) {
-		window_rect.right = width - 1;
-	}
-	if( window_rect.bottom >= height - 1 ) {
-		window_rect.bottom = height - 1;
-	}
-
-	window_center_x = ( window_rect.right + window_rect.left ) / 2;
-	window_center_y = ( window_rect.top + window_rect.bottom ) / 2;
-
 	SetCursorPos( window_center_x, window_center_y );
 
 	SetCapture( cl_hwnd );
 	ClipCursor( &window_rect );
-	while( ShowCursor( FALSE ) >= 0 ) ;
 }
 
 
@@ -269,23 +160,7 @@ static void IN_DeactivateMouse( void ) {
 
 	mouseactive = false;
 
-	if( dinput_initialized ) {
-		if( g_pMouse ) {
-			if( dinput_acquired ) {
-				IDirectInputDevice_Unacquire( g_pMouse );
-				dinput_acquired = false;
-			}
-			if( cl_hwnd ) {
-				if( FAILED( IDirectInputDevice_SetCooperativeLevel( g_pMouse, cl_hwnd, DISCL_EXCLUSIVE | DISCL_BACKGROUND ) ) ) {
-					Com_DPrintf( "Couldn't set DI coop level\n" );
-					return;
-				}
-			}
-		}
-		return;
-	}
-
-	if( rawinput_initialized > 0 ) {
+	if( rawinput_initialized ) {
 		IN_RawInput_DeRegister();
 	}
 
@@ -293,111 +168,10 @@ static void IN_DeactivateMouse( void ) {
 		SystemParametersInfo( SPI_SETMOUSE, 0, originalmouseparms, 0 );
 	}
 
+	SetCursorPos( window_center_x, window_center_y );
+
 	ClipCursor( NULL );
 	ReleaseCapture();
-	while( ShowCursor( TRUE ) < 0 ) ;
-}
-
-
-/*
-* IN_InitDInput
-*/
-static bool IN_InitDInput( void ) {
-	HRESULT hr;
-	DIPROPDWORD dipdw = {
-		{
-			sizeof( DIPROPDWORD ), // diph.dwSize
-			sizeof( DIPROPHEADER ),     // diph.dwHeaderSize
-			0,                  // diph.dwObj
-			DIPH_DEVICE,        // diph.dwHow
-		},
-		DINPUT_BUFFERSIZE,      // dwData
-	};
-
-	if( !hInstDI ) {
-		hInstDI = LoadLibrary( "dinput.dll" );
-
-		if( hInstDI == NULL ) {
-			Com_Printf( "Couldn't load dinput.dll\n" );
-			return false;
-		}
-	}
-
-	if( !pDirectInputCreate ) {
-		pDirectInputCreate = (void *)GetProcAddress( hInstDI, "DirectInputCreateA" );
-
-		if( !pDirectInputCreate ) {
-			Com_Printf( "Couldn't get DI proc addr\n" );
-			return false;
-		}
-	}
-
-	// register with DirectInput and get an IDirectInput to play with
-	hr = iDirectInputCreate( global_hInstance, DIRECTINPUT_VERSION, &g_pdi, NULL );
-
-	if( FAILED( hr ) ) {
-		Com_Printf( "DirectInputCreate failed\n" );
-		return false;
-	}
-
-	// obtain an interface to the system mouse device
-	hr = IDirectInput_CreateDevice( g_pdi, &qGUID_SysMouse, &g_pMouse, NULL );
-
-	if( FAILED( hr ) ) {
-		Com_Printf( "Couldn't open DI mouse device\n" );
-		return false;
-	}
-
-	// set the data format to "mouse format"
-	hr = IDirectInputDevice_SetDataFormat( g_pMouse, &df );
-
-	if( FAILED( hr ) ) {
-		Com_Printf( "Couldn't set DI mouse format\n" );
-		return false;
-	}
-
-	// set the cooperativity level
-	hr = IDirectInputDevice_SetCooperativeLevel( g_pMouse, cl_hwnd,
-												 DISCL_EXCLUSIVE | DISCL_FOREGROUND );
-
-	if( FAILED( hr ) ) {
-		Com_DPrintf( "Couldn't set DI coop level\n" );
-		return false;
-	}
-
-	// set the buffer size to DINPUT_BUFFERSIZE elements
-	// the buffer size is a DWORD property associated with the device
-	hr = IDirectInputDevice_SetProperty( g_pMouse, DIPROP_BUFFERSIZE, &dipdw.diph );
-
-	if( FAILED( hr ) ) {
-		Com_DPrintf( "Couldn't set DI buffersize\n" );
-		return false;
-	}
-
-	return true;
-}
-
-/*
-* IN_ShutdownDInput
-*/
-static void IN_ShutdownDInput( void ) {
-	if( g_pMouse ) {
-		IDirectInputDevice_SetCooperativeLevel( g_pMouse, cl_hwnd, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND );
-		IDirectInputDevice_Release( g_pMouse );
-	}
-
-	if( g_pdi ) {
-		IDirectInput_Release( g_pdi );
-	}
-
-	if( hInstDI ) {
-		FreeLibrary( hInstDI );
-	}
-
-	g_pMouse = NULL;
-	g_pdi = NULL;
-	hInstDI = NULL;
-	pDirectInputCreate = NULL;
 }
 
 /*
@@ -595,6 +369,8 @@ bool IN_RawInput_Init( void ) {
 * IN_RawInput_Shutdown
 */
 static void IN_RawInput_Shutdown( void ) {
+	rawinput_initialized = false;
+
 	if( rawmicecount < 1 ) {
 		return;
 	}
@@ -727,13 +503,14 @@ void IN_RawInput_MouseRead( HANDLE in_device_handle ) {
 */
 static void IN_StartupMouse( void ) {
 	cvar_t *cv;
+	int width, height;
 
 	cv = Cvar_Get( "in_initmouse", "1", CVAR_NOSET );
 	if( !cv->integer ) {
 		return;
 	}
 
-	dinput_initialized = false;
+	in_showcursor = true;
 	rawinput_initialized = false;
 
 	cv = Cvar_Get( "m_raw", "1", CVAR_ARCHIVE );
@@ -741,25 +518,36 @@ static void IN_StartupMouse( void ) {
 		rawinput_initialized = IN_RawInput_Init();
 	}
 
-	if( !rawinput_initialized ) {
-		cv = Cvar_Get( "in_dinput", "0", CVAR_ARCHIVE );
-		if( cv->integer ) {
-			dinput_initialized = IN_InitDInput();
-		}
-	}
-
 	if( rawinput_initialized ) {
 		Com_Printf( "Raw input initialized with %i mice\n", rawmicecount );
-	} else if( dinput_initialized ) {
-		Com_Printf( "DirectInput initialized\n" );
 	} else {
 		Com_Printf( "DirectInput not initialized, using standard input\n" );
+		mouseparmsvalid = SystemParametersInfo( SPI_GETMOUSE, 0, originalmouseparms, 0 );
 	}
 
 	mouseinitialized = true;
-	mouseparmsvalid = SystemParametersInfo( SPI_GETMOUSE, 0, originalmouseparms, 0 );
 	mouse_buttons = 8;
 	mouse_wheel_type = MWHEEL_UNKNOWN;
+
+	width = GetSystemMetrics( SM_CXSCREEN );
+	height = GetSystemMetrics( SM_CYSCREEN );
+
+	GetWindowRect( cl_hwnd, &window_rect );
+	if( window_rect.left < 0 ) {
+		window_rect.left = 0;
+	}
+	if( window_rect.top < 0 ) {
+		window_rect.top = 0;
+	}
+	if( window_rect.right >= width ) {
+		window_rect.right = width - 1;
+	}
+	if( window_rect.bottom >= height - 1 ) {
+		window_rect.bottom = height - 1;
+	}
+
+	window_center_x = ( window_rect.right + window_rect.left ) / 2;
+	window_center_y = ( window_rect.top + window_rect.bottom ) / 2;
 }
 
 /*
@@ -768,10 +556,13 @@ static void IN_StartupMouse( void ) {
 void IN_MouseEvent( int mstate ) {
 	int i;
 
-	if( !mouseinitialized || dinput_initialized ) {
+	if( !mouseinitialized ) {
 		return;
 	}
-	if( ( cls.key_dest == key_console ) && !in_grabinconsole->integer ) {
+	if( cls.key_dest == key_console ) {
+		return;
+	}
+	if( cls.key_dest == key_menu && !cls.show_cursor ) {
 		return;
 	}
 
@@ -795,10 +586,6 @@ void IN_MouseEvent( int mstate ) {
 * IN_GetMouseMovement
 */
 void IN_GetMouseMovement( int *dx, int *dy ) {
-	DIDEVICEOBJECTDATA od;
-	DWORD dwElements;
-	HRESULT hr;
-
 	*dx = *dy = 0;
 	
 	if( !mouseactive ) {
@@ -816,72 +603,6 @@ void IN_GetMouseMovement( int *dx, int *dy ) {
 			my += rawmice[i].delta[1];
 			rawmice[i].delta[0] = rawmice[i].delta[1] = 0;
 		}
-	} else if( dinput_initialized ) {
-		mx = 0;
-		my = 0;
-
-		for(;; ) {
-			dwElements = 1;
-
-			hr = IDirectInputDevice_GetDeviceData( g_pMouse,
-												   sizeof( DIDEVICEOBJECTDATA ), &od, &dwElements, 0 );
-
-			if( ( hr == DIERR_INPUTLOST ) || ( hr == DIERR_NOTACQUIRED ) ) {
-				dinput_acquired = true;
-				IDirectInputDevice_Acquire( g_pMouse );
-				break;
-			}
-
-			// unable to read data or no data available
-			if( FAILED( hr ) || dwElements == 0 ) {
-				break;
-			}
-
-			sys_msg_time = od.dwTimeStamp;
-
-			// look at the element to see what happened
-			switch( od.dwOfs ) {
-				case DIMOFS_X:
-					mx += (int)od.dwData;
-					break;
-
-				case DIMOFS_Y:
-					my += (int)od.dwData;
-					break;
-
-				case DIMOFS_Z:
-					if( mouse_wheel_type != MWHEEL_WM ) {
-						mouse_wheel_type = MWHEEL_DINPUT;
-						if( (int)od.dwData > 0 ) {
-							Key_Event( K_MWHEELUP, true, sys_msg_time );
-							Key_Event( K_MWHEELUP, false, sys_msg_time );
-						} else {
-							Key_Event( K_MWHEELDOWN, true, sys_msg_time );
-							Key_Event( K_MWHEELDOWN, false, sys_msg_time );
-						}
-					}
-					break;
-
-				case DIMOFS_BUTTON0:
-				case DIMOFS_BUTTON1:
-				case DIMOFS_BUTTON2:
-				case DIMOFS_BUTTON3:
-				case DIMOFS_BUTTON0 + 4:
-				case DIMOFS_BUTTON0 + 5:
-				case DIMOFS_BUTTON0 + 6:
-				case DIMOFS_BUTTON0 + 7:
-					if( od.dwData & 0x80 ) {
-						mstate_di |= ( 1 << ( od.dwOfs - DIMOFS_BUTTON0 ) );
-					} else {
-						mstate_di &= ~( 1 << ( od.dwOfs - DIMOFS_BUTTON0 ) );
-					}
-					break;
-			}
-		}
-
-		dinput_initialized = false; // FIXME...
-		IN_MouseEvent( mstate_di );
-		dinput_initialized = true;
 	} else {
 		// find mouse movement
 		if( !GetCursorPos( &current_pos ) ) {
@@ -907,10 +628,6 @@ void IN_GetMouseMovement( int *dx, int *dy ) {
 void IN_Init( void ) {
 	Com_Printf( "\n------- input initialization -------\n" );
 
-	// mouse variables
-	in_mouse        = Cvar_Get( "in_mouse", "1", CVAR_ARCHIVE );
-	in_grabinconsole    = Cvar_Get( "in_grabinconsole", "0", CVAR_ARCHIVE );
-
 	IN_StartupMouse();
 	IN_XInput_Init();
 
@@ -923,15 +640,15 @@ void IN_Init( void ) {
 void IN_Shutdown( void ) {
 	IN_DeactivateMouse();
 
+	in_showcursor = true;
+	IN_ShowCursor();
+
 	if( rawinput_initialized ) {
 		IN_RawInput_Shutdown();
-	} else if( dinput_initialized ) {
-		IN_ShutdownDInput();
 	}
 
 	IN_XInput_Shutdown();
 
-	dinput_acquired = dinput_initialized = false;
 	rawinput_initialized = false;
 }
 
@@ -958,30 +675,26 @@ void IN_Activate( bool active ) {
 	}
 }
 
-
 /*
 * IN_Frame
 *
 * Called every frame, even if not generating commands
 */
 void IN_Frame( void ) {
+	bool showcursor;
+	bool console = cls.key_dest == key_console;
+	bool menu = cls.key_dest == key_menu;
+
 	extern cvar_t *vid_fullscreen;
 
 	if( !mouseinitialized ) {
 		return;
 	}
 
+	// TODO: clean up this mess
 	if( vid_fullscreen ) {
-		if( !vid_fullscreen->integer || cl_parent_hwnd ) {
-			extern cvar_t *in_grabinconsole;
-
-			// if we have a parent window (say, a browser plugin window) and
-			// the window is not focused, deactivate the input
-			if( cl_parent_hwnd && !AppFocused ) {
-				if( in_appactive ) {
-					IN_Activate( false );
-				}
-			} else if( in_grabinconsole->integer || cls.key_dest != key_console ) {
+		if( !vid_fullscreen->integer ) {
+			 if( !console && !menu ) {
 				if( !in_appactive && ActiveApp ) {
 					IN_Activate( true );
 				}
@@ -991,20 +704,48 @@ void IN_Frame( void ) {
 				}
 			}
 		} else {
-			if( !ActiveApp && in_appactive ) {
+			if( ( !ActiveApp || menu ) && in_appactive ) {
 				IN_Activate( false );
-			} else if( ActiveApp && !in_appactive ) {
+			} else if( ActiveApp && !menu && !in_appactive ) {
 				IN_Activate( true );
 			}
 		}
 	}
 
-	if( !in_mouse || !in_appactive ) {
+	showcursor = !in_appactive;
+	if( cls.key_dest == key_menu && !cls.show_cursor ) {
+		showcursor = false;
+	}
+
+	if( !in_appactive ) {
 		IN_DeactivateMouse();
+	} else {
+		IN_ActivateMouse();
+	}
+
+	if( showcursor != in_showcursor ) {
+		in_showcursor = showcursor;
+		IN_ShowCursor();
+	}
+}
+
+/*
+* IN_GetMousePosition
+*/
+void IN_GetMousePosition( int *x, int *y ) {
+	POINT p;
+
+	if( !mouseinitialized ) {
 		return;
 	}
 
-	IN_ActivateMouse();
+	if( !GetCursorPos( &p ) ) {
+		return;
+	}
+	if( ScreenToClient( cl_hwnd, &p ) ) {
+		*x = p.x;
+		*y = p.y;
+	}
 }
 
 /*

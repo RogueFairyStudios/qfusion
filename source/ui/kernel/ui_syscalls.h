@@ -155,7 +155,7 @@ inline void R_DrawRotatedStretchPic( int x, int y, int w, int h, float s1, float
 	UI_IMPORT.R_DrawRotatedStretchPic( x, y, w, h, s1, t1, s2, t2, angle, color, shader );
 }
 
-inline void R_TransformVectorToScreen( refdef_t *rd, vec3_t in, vec2_t out ) {
+inline void R_TransformVectorToScreen( refdef_t *rd, vec3_t in, vec3_t out ) {
 	UI_IMPORT.R_TransformVectorToScreen( rd, in, out );
 }
 
@@ -169,6 +169,10 @@ inline int R_SkeletalGetBoneInfo( struct model_s *mod, int bone, char *name, int
 
 inline void R_SkeletalGetBonePose( struct model_s *mod, int bone, int frame, bonepose_t *bonepose ) {
 	UI_IMPORT.R_SkeletalGetBonePose( mod, bone, frame, bonepose );
+}
+
+inline void R_SetTransformMatrix( const float *m ) {
+	UI_IMPORT.R_SetTransformMatrix( m );
 }
 
 inline const char *ML_GetFullname( const char *name ) {

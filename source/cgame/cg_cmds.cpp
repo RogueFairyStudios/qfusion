@@ -41,9 +41,9 @@ static void CG_SC_Print( void ) {
 static void CG_SC_ChatPrint( void ) {
 	const bool teamonly = ( !Q_stricmp( trap_Cmd_Argv( 0 ), "tch" ) ? true : false );
 	const int who = atoi( trap_Cmd_Argv( 1 ) );
-	const char *name = ( who && who == bound( 1, who, MAX_CLIENTS ) ? cgs.clientInfo[who - 1].name : NULL );
+	const char *name = ( who && who == Q_bound( 1, who, MAX_CLIENTS ) ? cgs.clientInfo[who - 1].name : NULL );
 	const char *text = trap_Cmd_Argv( 2 );
-	const cvar_t *filter = ( cgs.tv ? cg_chatFilterTV : cg_chatFilter );
+	const cvar_t *filter = cg_chatFilter;
 
 	if( filter->integer & ( teamonly ? 2 : 1 ) ) {
 		return;
@@ -59,25 +59,7 @@ static void CG_SC_ChatPrint( void ) {
 	}
 
 	if( cg_chatBeep->integer ) {
-		trap_S_StartLocalSound( CG_MediaSfx( cgs.media.sfxChat ), CHAN_AUTO, 1.0f );
-	}
-}
-
-/*
-* CG_SC_TVChatPrint
-*/
-static void CG_SC_TVChatPrint( void ) {
-	const char *name = trap_Cmd_Argv( 1 );
-	const char *text = trap_Cmd_Argv( 2 );
-	const cvar_t *filter = ( cgs.tv ? cg_chatFilterTV : cg_chatFilter );
-
-	if( filter->integer & 4 ) {
-		return;
-	}
-
-	CG_LocalPrint( S_COLOR_RED "[TV]" S_COLOR_WHITE "%s" S_COLOR_GREEN ": %s", name, text );
-	if( cg_chatBeep->integer ) {
-		trap_S_StartLocalSound( CG_MediaSfx( cgs.media.sfxChat ), CHAN_AUTO, 1.0f );
+		trap_S_StartLocalSound( cgs.media.sfxChat, CHAN_AUTO, 1.0f );
 	}
 }
 
@@ -134,9 +116,7 @@ void CG_ConfigString( int i, const char *s ) {
 
 	// do something apropriate
 	if( i == CS_MAPNAME ) {
-		CG_RegisterLevelMinimap();
-	} else if( i == CS_TVSERVER ) {
-		CG_UpdateTVServerString();
+		CG_PrecacheMinimap();
 	} else if( i == CS_GAMETYPETITLE ) {
 	} else if( i == CS_GAMETYPENAME ) {
 		GS_SetGametypeName( cgs.configStrings[CS_GAMETYPENAME] );
@@ -420,31 +400,6 @@ void CG_SC_AutoRecordAction( const char *action ) {
 	}
 }
 
-/*
-* CG_SC_ChannelAdd
-*/
-static void CG_SC_ChannelAdd( void ) {
-	char menuparms[MAX_STRING_CHARS];
-
-	Q_snprintfz( menuparms, sizeof( menuparms ), "menu_tvchannel_add %s\n", trap_Cmd_Args() );
-	trap_Cmd_ExecuteText( EXEC_NOW, menuparms );
-}
-
-/*
-* CG_SC_ChannelRemove
-*/
-static void CG_SC_ChannelRemove( void ) {
-	int i, id;
-
-	for( i = 1; i < trap_Cmd_Argc(); i++ ) {
-		id = atoi( trap_Cmd_Argv( i ) );
-		if( id <= 0 ) {
-			continue;
-		}
-		trap_Cmd_ExecuteText( EXEC_NOW, va( "menu_tvchannel_remove %i\n", id ) );
-	}
-}
-
 /**
  * Returns the English match state message.
  *
@@ -712,7 +667,7 @@ static void CG_SC_MenuCustom( void ) {
 	char request[MAX_STRING_CHARS];
 	int i, c;
 
-	if( cgs.demoPlaying || cgs.tv ) {
+	if( cgs.demoPlaying ) {
 		return;
 	}
 
@@ -734,28 +689,28 @@ static void CG_SC_MenuCustom( void ) {
 }
 
 /*
-* CG_SC_MenuQuick
+* CG_SC_MenuOverlay
 */
-static void CG_SC_MenuQuick( void ) {
+static void CG_SC_MenuOverlay( void ) {
 	int i, c;
 
-	if( cgs.demoPlaying || cgs.tv ) {
+	if( cgs.demoPlaying ) {
 		return;
 	}
 
-	cg.quickmenu[0] = '\0';
+	cg.overlayMenu[0] = '\0';
 
 	if( trap_Cmd_Argc() >= 2 ) {
 		for( i = 1, c = 1; i < trap_Cmd_Argc() - 1; i += 2, c++ ) {
 			const char *label = trap_Cmd_Argv( i );
 			const char *cmd = trap_Cmd_Argv( i + 1 );
 
-			Q_strncatz( cg.quickmenu, va( "btn%i \"%s\" ", c, label ), sizeof( cg.quickmenu ) );
-			Q_strncatz( cg.quickmenu, va( "cmd%i \"%s%s\" ", c, *cmd ? "cmd " : "", cmd ), sizeof( cg.quickmenu ) );
+			Q_strncatz( cg.overlayMenu, va( "btn%i \"%s\" ", c, label ), sizeof( cg.overlayMenu ) );
+			Q_strncatz( cg.overlayMenu, va( "cmd%i \"%s%s\" ", c, *cmd ? "cmd " : "", cmd ), sizeof( cg.overlayMenu ) );
 		}
 	}
 
-	CG_RefreshQuickMenu();
+	CG_RefreshOverlayMenu();
 }
 
 /*
@@ -765,7 +720,7 @@ static void CG_SC_MenuOpen_( bool modal ) {
 	char request[MAX_STRING_CHARS];
 	int i, c;
 
-	if( cgs.demoPlaying || cgs.tv ) {
+	if( cgs.demoPlaying ) {
 		return;
 	}
 
@@ -825,7 +780,6 @@ static const svcmd_t cg_svcmds[] =
 	{ "pr", CG_SC_Print },
 	{ "ch", CG_SC_ChatPrint },
 	{ "tch", CG_SC_ChatPrint },
-	{ "tvch", CG_SC_TVChatPrint },
 	{ "cp", CG_SC_CenterPrint },
 	{ "cpf", CG_SC_CenterPrintFormat },
 	{ "obry", CG_SC_Obituary },
@@ -835,14 +789,12 @@ static const svcmd_t cg_svcmds[] =
 	{ "mapmsg", CG_SC_HelpMessage },
 	{ "ti", CG_CS_UpdateTeamInfo },
 	{ "demoget", CG_SC_DemoGet },
-	{ "cha", CG_SC_ChannelAdd },
-	{ "chr", CG_SC_ChannelRemove },
 	{ "mecu", CG_SC_MenuCustom },
 	{ "meop", CG_SC_MenuOpen },
 	{ "memo", CG_SC_MenuModal },
 	{ "motd", CG_SC_MOTD },
 	{ "aw", CG_SC_AddAward },
-	{ "qm", CG_SC_MenuQuick },
+	{ "qm", CG_SC_MenuOverlay },
 
 	{ NULL }
 };
@@ -1085,6 +1037,13 @@ static void CG_Viewpos_f( void ) {
 	CG_Printf( "\"angles\" \"%i %i %i\"\n", (int)cg.view.angles[0], (int)cg.view.angles[1], (int)cg.view.angles[2] );
 }
 
+/*
+* CG_CenterViewCmd_f
+*/
+static void CG_CenterViewCmd_f( void ) {
+	CG_CenterView( -SHORT2ANGLE( cg.predictedPlayerState.pmove.delta_angles[PITCH] ) );
+}
+
 // ======================================================================
 
 /*
@@ -1202,6 +1161,7 @@ static const cgcmd_t cgcmds[] =
 	{ "weaplast", CG_Cmd_LastWeapon_f, true },
 	{ "weapcross", CG_Cmd_WeaponCross_f, true },
 	{ "viewpos", CG_Viewpos_f, true },
+	{ "centerview", CG_CenterViewCmd_f, false },
 	{ "players", NULL, false },
 	{ "spectators", NULL, false },
 

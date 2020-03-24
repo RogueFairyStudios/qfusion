@@ -30,6 +30,7 @@ extern "C" {
 //
 // button bits
 //
+#define BUTTON_NONE                 0
 #define BUTTON_ATTACK               1
 #define BUTTON_WALK                 2
 #define BUTTON_SPECIAL              4
@@ -63,7 +64,7 @@ typedef struct usercmd_s {
 	int8_t forwardmove, sidemove, upmove;
 } usercmd_t;
 
-#define MAX_PM_STATS 16
+#define MAX_PM_STATS 32
 
 enum {
 	PM_STAT_FEATURES,
@@ -120,7 +121,6 @@ typedef struct {
 
 	int pm_flags;               // ducked, jump_held, etc
 	int pm_time;                // each unit = 8 ms
-	int skim_time;
 	short stats[PM_STAT_SIZE];  // Kurim : timers for knockback, stun, doublejump, walljump
 	int gravity;
 	short delta_angles[3];      // add to command angles to get view direction
@@ -129,25 +129,11 @@ typedef struct {
 
 #define MAXTOUCH    32
 
-#define PM_CROUCHSLIDE 1500
-#define PM_CROUCHSLIDE_FADE 500
-
-
 //==========================================================
 //
 //  ELEMENTS COMMUNICATED ACROSS THE NET
 //
 //==========================================================
-
-
-// note that Q_rint was causing problems here
-// (spawn looking straight up\down at delta_angles wrapping)
-
-#define ANGLE2SHORT( x )    ( (int)( ( x ) * 65536 / 360 ) & 65535 )
-#define SHORT2ANGLE( x )    ( ( x ) * ( 360.0 / 65536 ) )
-
-#define ANGLE2BYTE( x )     ( (int)( ( x ) * 256 / 360 ) & 255 )
-#define BYTE2ANGLE( x )     ( ( x ) * ( 360.0 / 256 ) )
 
 #define MAX_GAMECOMMANDS    256     // command names for command completion
 #define MAX_LOCATIONS       256
@@ -160,7 +146,7 @@ typedef struct {
 // Each config string can be at most MAX_QPATH characters.
 //
 #define CS_HOSTNAME         0
-#define CS_TVSERVER         1
+#define CS_UNUSED           1
 #define CS_MAXCLIENTS       2
 #define CS_MODMANIFEST      3
 
@@ -244,6 +230,7 @@ typedef struct {
 #define SVF_FORCEOWNER          0x00000400      // this entity forces the entity at s.ownerNum to be included in the snapshot
 #define SVF_ONLYOWNER           0x00000800      // this entity is only transmitted to its owner
 #define SVF_FORCETEAM           0x00001000      // this entity is always transmitted to clients with the same ent->s.team value
+#define SVF_MONSTER		0x00002000	// treat as CONTENTS_MONSTER for collision
 
 // edict->solid values
 typedef enum {
@@ -299,6 +286,7 @@ typedef struct entity_state_s {
 	vec3_t origin;
 	vec3_t angles;
 	vec3_t origin2;                 // ET_BEAM, ET_PORTALSURFACE, ET_EVENT specific
+	vec3_t origin3;                 // event-specific
 
 	unsigned int modelindex;
 	unsigned int modelindex2;
@@ -327,9 +315,9 @@ typedef struct entity_state_s {
 	int range;                      // ET_LASERBEAM, ET_CURVELASERBEAM specific
 
 	bool linearMovement;
-	vec3_t linearMovementVelocity;      // this is transmitted instead of origin when linearProjectile is true
-	vec3_t linearMovementEnd;           // the end movement point for brush models
-	vec3_t linearMovementBegin;			// the starting movement point for brush models
+	vec3_t linearMovementVelocity;
+	vec3_t linearMovementEnd;           // the end movement point for objects moving along linear path
+	vec3_t linearMovementBegin;			// the starting movement point for objects moving along linear path
 	unsigned int linearMovementDuration;
 	int64_t linearMovementTimeStamp;
 
@@ -467,13 +455,18 @@ typedef struct {
 
 	// A hint (in)
 	bool skipCollision;
+	int passEnt;
+	vec3_t mins, maxs;          // bounding box size
+	float remainingTime;
+	float slideBounce;
+
+	// in / out
+	vec3_t origin, velocity;
 
 	// results (out)
 	int numtouch;
 	int touchents[MAXTOUCH];
 	float step;                 // used for smoothing the player view
-
-	vec3_t mins, maxs;          // bounding box size
 
 	int groundentity;
 	cplane_t groundplane;       // valid if groundentity >= 0

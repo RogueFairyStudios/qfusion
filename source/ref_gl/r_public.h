@@ -129,7 +129,7 @@ typedef struct {
 
 	rserr_t ( *Init )( const char *applicationName, const char *screenshotsPrefix, int startupColor,
 					   int iconResource, const int *iconXPM, void *hinstance, void *wndproc, void *parenthWnd, bool verbose );
-	rserr_t ( *SetMode )( int x, int y, int width, int height, int displayFrequency, bool fullScreen, bool stereo, bool borderless );
+	rserr_t ( *SetMode )( int x, int y, int width, int height, bool fullScreen, bool stereo, bool borderless );
 	rserr_t ( *SetWindow )( void *hinstance, void *wndproc, void *parenthWnd );
 
 	void ( *Shutdown )( bool verbose );
@@ -210,7 +210,7 @@ typedef struct {
 	struct shader_s * ( *GetShaderForOrigin )( const vec3_t origin );
 	struct cinematics_s * ( *GetShaderCinematic )( struct shader_s *shader );
 
-	void ( *TransformVectorToScreen )( const refdef_t *rd, const vec3_t in, vec2_t out );
+	void ( *TransformVectorToScreen )( const refdef_t *rd, const vec3_t in, vec3_t out );
 
 	// Should only be used as a hint - the renderer may keep drawing or not drawing to the window for a few frames when this changes
 	bool ( *RenderingEnabled )( void );
@@ -226,6 +226,14 @@ typedef struct {
 	void ( *StopAviDemo )( void );
 
 	void ( *AppActivate )( bool active, bool minimize, bool destroy );
+
+	/**
+	* SetTransformMatrix
+	*
+	* Called by UI when it wants to set the current transform matrix to a new matrix.
+	* Passing a NULL pointer will set the transform matrix to identity.
+	*/
+	void ( *SetTransformMatrix )( const float *m );
 } ref_export_t;
 
 typedef ref_export_t *(*GetRefAPI_t)( const ref_import_t *imports );

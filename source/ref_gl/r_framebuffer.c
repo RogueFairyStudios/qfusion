@@ -33,6 +33,7 @@ typedef struct {
 	unsigned int colorRenderBuffer;
 	int width, height;
 	int samples;
+	bool sRGB;
 	image_t *depthTexture;
 	image_t *colorTexture[MAX_FRAMEBUFFER_COLOR_ATTACHMENTS];
 } r_fbo_t;
@@ -93,7 +94,7 @@ static void RFB_DeleteObject( r_fbo_t *fbo ) {
 * RFB_RegisterObject
 */
 int RFB_RegisterObject( int width, int height, bool builtin, bool depthRB, bool stencilRB,
-						bool colorRB, int samples, bool useFloat ) {
+						bool colorRB, int samples, bool useFloat, bool sRGB ) {
 	int i;
 	int format;
 	GLuint fbID;
@@ -143,6 +144,7 @@ found:
 	fbo->width = width;
 	fbo->height = height;
 	fbo->samples = samples;
+	fbo->sRGB = sRGB;
 
 	qglBindFramebufferEXT( GL_FRAMEBUFFER_EXT, fbo->objectID );
 
@@ -202,14 +204,15 @@ found:
 		qglBindRenderbufferEXT( GL_RENDERBUFFER_EXT, 0 );
 	}
 
-	if( fbo->colorRenderBuffer ) {
+	if( colorRB ) {
 		qglFramebufferRenderbufferEXT( GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_RENDERBUFFER_EXT, fbo->colorRenderBuffer );
 	}
-	if( fbo->depthRenderBuffer ) {
-		qglFramebufferRenderbufferEXT( GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, fbo->depthRenderBuffer );
-	}
-	if( fbo->stencilRenderBuffer ) {
-		qglFramebufferRenderbufferEXT( GL_FRAMEBUFFER_EXT, GL_STENCIL_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, fbo->stencilRenderBuffer );
+	if( depthRB ) {
+		if( stencilRB ) {
+			qglFramebufferRenderbufferEXT( GL_FRAMEBUFFER_EXT, GL_DEPTH_STENCIL_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, fbo->stencilRenderBuffer );
+		} else {
+			qglFramebufferRenderbufferEXT( GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, fbo->depthRenderBuffer );
+		}
 	}
 
 	if( colorRB && depthRB ) {
@@ -373,12 +376,12 @@ bind:
 	qglFramebufferTexture2DEXT( GL_FRAMEBUFFER_EXT, attachment, GL_TEXTURE_2D, texnum, 0 );
 	if( texture ) {
 		if( ( texture->flags & ( IT_DEPTH | IT_STENCIL ) ) == ( IT_DEPTH | IT_STENCIL ) ) {
-			qglFramebufferTexture2DEXT( GL_FRAMEBUFFER_EXT, GL_STENCIL_ATTACHMENT_EXT, GL_TEXTURE_2D, texnum, 0 );
+			qglFramebufferTexture2DEXT( GL_FRAMEBUFFER_EXT, GL_DEPTH_STENCIL_ATTACHMENT_EXT, GL_TEXTURE_2D, texnum, 0 );
 		}
 	}
 	else {
 		if( depth ) {
-			qglFramebufferTexture2DEXT( GL_FRAMEBUFFER_EXT, GL_STENCIL_ATTACHMENT_EXT, GL_TEXTURE_2D, texnum, 0 );
+			qglFramebufferTexture2DEXT( GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_TEXTURE_2D, texnum, 0 );
 		}
 	}
 	qglBindFramebufferEXT( GL_FRAMEBUFFER_EXT, r_bound_framebuffer_objectID ? r_bound_framebuffer_object->objectID : 0 );
@@ -432,10 +435,12 @@ bool RFB_HasColorRenderBuffer( int object ) {
 	if( object < 0 || object > r_num_framebuffer_objects ) {
 		return false;
 	}
+
 	fbo = r_framebuffer_objects + object - 1;
 	if( fbo->colorRenderBuffer != 0 ) {
 		return true;
 	}
+
 	for( i = 0; i < MAX_FRAMEBUFFER_COLOR_ATTACHMENTS; i++ ) {
 		if( fbo->colorTexture[i] != NULL ) {
 			return true;
@@ -492,6 +497,23 @@ int RFB_GetSamples( int object ) {
 	}
 	fbo = r_framebuffer_objects + object - 1;
 	return fbo->samples;
+}
+
+/*
+* RFB_sRGBColorSpace
+*/
+bool RFB_sRGBColorSpace( int object ) {
+	r_fbo_t *fbo;
+
+	assert( object >= 0 && object <= r_num_framebuffer_objects );
+	if( object == 0 ) {
+		return true;
+	}
+	if( object < 0 || object > r_num_framebuffer_objects ) {
+		return false;
+	}
+	fbo = r_framebuffer_objects + object - 1;
+	return fbo->sRGB;
 }
 
 /*
@@ -583,6 +605,8 @@ void RFB_BlitObject( int src, int dest, int bitMask, int mode, int filter, int r
 			dh = fbo->height;
 			break;
 	}
+
+	qglGetError();
 
 	qglBindFramebufferEXT( GL_FRAMEBUFFER_EXT, 0 );
 	qglBindFramebufferEXT( GL_READ_FRAMEBUFFER_EXT, fbo->objectID );

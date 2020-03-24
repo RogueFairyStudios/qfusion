@@ -127,8 +127,6 @@ static void CG_AddLocalSounds( void ) {
 	// if in postmatch, play postmatch song
 	if( GS_MatchState() >= MATCH_STATE_POSTMATCH ) {
 		if( !postmatchsound_set && !demostream ) {
-			CG_ShowQuickMenu( 1 );
-
 			trap_S_StartBackgroundTrack( S_PLAYLIST_POSTMATCH, NULL, 3 ); // loop random track from the playlist
 			postmatchsound_set = true;
 			background = false;
@@ -140,8 +138,6 @@ static void CG_AddLocalSounds( void ) {
 		}
 
 		if( postmatchsound_set ) {
-			CG_ShowQuickMenu( 0 );
-
 			trap_S_StopBackgroundTrack();
 			postmatchsound_set = false;
 			background = false;
@@ -195,24 +191,6 @@ static void CG_FlashGameWindow( void ) {
 	if( flash ) {
 		trap_VID_FlashWindow( cg_flashWindowCount->integer );
 	}
-}
-
-/*
-* CG_GetSensitivityScale
-* Scale sensitivity for different view effects
-*/
-float CG_GetSensitivityScale( float sens, float zoomSens ) {
-	float sensScale = 1.0f;
-
-	if( !cgs.demoPlaying && sens && ( cg.predictedPlayerState.pmove.stats[PM_STAT_ZOOMTIME] > 0 ) ) {
-		if( zoomSens ) {
-			return zoomSens / sens;
-		}
-
-		return cg_zoomfov->value / cg_fov->value;
-	}
-
-	return sensScale;
 }
 
 /*
@@ -396,11 +374,11 @@ void CG_StartKickAnglesEffect( vec3_t source, float knockback, float radius, int
 
 		side = DotProduct( v, right );
 		cg.kickangles[kicknum].v_roll = kick * side * 0.3;
-		clamp( cg.kickangles[kicknum].v_roll, -20, 20 );
+		Q_clamp( cg.kickangles[kicknum].v_roll, -20, 20 );
 
 		side = -DotProduct( v, forward );
 		cg.kickangles[kicknum].v_pitch = kick * side * 0.3;
-		clamp( cg.kickangles[kicknum].v_pitch, -20, 20 );
+		Q_clamp( cg.kickangles[kicknum].v_pitch, -20, 20 );
 
 		cg.kickangles[kicknum].timestamp = cg.time;
 		ftime = (float)time * delta;
@@ -505,31 +483,30 @@ void CG_AddEntityToScene( entity_t *ent ) {
 /*
 * CG_SkyPortal
 */
-int CG_SkyPortal( void ) {
+static void CG_SkyPortal( refdef_t *rd ) {
 	float fov = 0;
 	float scale = 0;
 	int noents = 0;
 	float pitchspeed = 0, yawspeed = 0, rollspeed = 0;
-	skyportal_t *sp = &cg.view.refdef.skyportal;
+	skyportal_t *sp = &rd->skyportal;
 
 	if( cgs.configStrings[CS_SKYBOX][0] == '\0' ) {
-		return 0;
+		return;
 	}
 
 	if( sscanf( cgs.configStrings[CS_SKYBOX], "%f %f %f %f %f %i %f %f %f",
 				&sp->vieworg[0], &sp->vieworg[1], &sp->vieworg[2], &fov, &scale,
 				&noents,
 				&pitchspeed, &yawspeed, &rollspeed ) >= 3 ) {
-		float off = cg.view.refdef.time * 0.001f;
+		float off = rd->time * 0.001f;
 
 		sp->fov = fov;
 		sp->noEnts = ( noents ? true : false );
 		sp->scale = scale ? 1.0f / scale : 0;
 		VectorSet( sp->viewanglesOffset, anglemod( off * pitchspeed ), anglemod( off * yawspeed ), anglemod( off * rollspeed ) );
-		return RDF_SKYPORTALINVIEW;
+		rd->rdflags |= RDF_SKYPORTALINVIEW;
+		return;
 	}
-
-	return 0;
 }
 
 /*
@@ -577,8 +554,6 @@ static int CG_RenderFlags( void ) {
 	if( GS_MatchState() >= MATCH_STATE_POSTMATCH ) {
 		rdflags |= RDF_BLURRED;
 	}
-
-	rdflags |= CG_SkyPortal();
 
 	return rdflags;
 }
@@ -802,9 +777,70 @@ static void CG_UpdateChaseCam( void ) {
 }
 
 /*
+* CG_SetupRefDef
+*/
+#define WAVE_AMPLITUDE  0.015   // [0..1]
+#define WAVE_FREQUENCY  0.6     // [0..1]
+static void CG_SetupRefDef( cg_viewdef_t *view ) {
+	refdef_t *rd = &view->refdef;
+
+	memset( rd, 0, sizeof( *rd ) );
+
+	// view rectangle size
+	rd->x = scr_vrect.x;
+	rd->y = scr_vrect.y;
+	rd->width = scr_vrect.width;
+	rd->height = scr_vrect.height;
+
+	rd->scissor_x = scr_vrect.x;
+	rd->scissor_y = scr_vrect.y;
+	rd->scissor_width = scr_vrect.width;
+	rd->scissor_height = scr_vrect.height;
+
+	rd->fov_x = view->fov_x;
+	rd->fov_y = view->fov_y;
+
+	rd->time = cg.time;
+	rd->areabits = cg.frame.areabits;
+
+	rd->minLight = 0.3f;
+
+	VectorCopy( view->origin, rd->vieworg );
+	Matrix3_Copy( view->axis, rd->viewaxis );
+	VectorInverse( &rd->viewaxis[AXIS_RIGHT] );
+
+	rd->colorCorrection = NULL;
+	if( cg_colorCorrection->integer ) {
+		int colorCorrection = GS_ColorCorrection();
+		if( ( colorCorrection > 0 ) && ( colorCorrection < MAX_IMAGES ) ) {
+			rd->colorCorrection = cgs.imagePrecache[colorCorrection];
+		}
+	}
+
+	// offset vieworg appropriately if we're doing stereo separation
+	VectorMA( view->origin, view->stereoSeparation, &view->axis[AXIS_RIGHT], rd->vieworg );
+
+	AnglesToAxis( view->angles, rd->viewaxis );
+
+	rd->rdflags = CG_RenderFlags();
+
+	// warp if underwater
+	if( rd->rdflags & RDF_UNDERWATER ) {
+		float phase = rd->time * 0.001 * WAVE_FREQUENCY * M_TWOPI;
+		float v = WAVE_AMPLITUDE * ( sin( phase ) - 1.0 ) + 1;
+		rd->fov_x *= v;
+		rd->fov_y *= v;
+	}
+
+	CG_SkyPortal( rd );
+
+	CG_asSetupRefdef( view );
+}
+
+/*
 * CG_SetupViewDef
 */
-static void CG_SetupViewDef( cg_viewdef_t *view, int type ) {
+static void CG_SetupViewDef( cg_viewdef_t *view, int type, float stereo_separation ) {
 	memset( view, 0, sizeof( cg_viewdef_t ) );
 
 	//
@@ -813,6 +849,7 @@ static void CG_SetupViewDef( cg_viewdef_t *view, int type ) {
 
 	view->type = type;
 	view->flipped = cg_flip->integer != 0;
+	view->stereoSeparation = stereo_separation;
 
 	if( view->type == VIEWDEF_PLAYERVIEW ) {
 		view->POVent = cg.frame.playerState.POVnum;
@@ -848,10 +885,10 @@ static void CG_SetupViewDef( cg_viewdef_t *view, int type ) {
 				}
 			}
 		}
-	} else if( view->type == VIEWDEF_CAMERA ) {
+	} else if( view->type == VIEWDEF_DEMOCAM ) {
 		CG_DemoCam_GetViewDef( view );
 	} else {
-		module_Error( "CG_SetupView: Invalid view type %i\n", view->type );
+		CG_Error( "CG_SetupView: Invalid view type %i\n", view->type );
 	}
 
 	//
@@ -891,39 +928,25 @@ static void CG_SetupViewDef( cg_viewdef_t *view, int type ) {
 			VectorCopy( cg.predictedPlayerState.viewangles, view->angles );
 		}
 
-		view->refdef.fov_x = CG_CalcViewFov();
+		view->fov_y = WidescreenFov( CG_CalcViewFov() );
 
 		CG_CalcViewBob();
 
 		VectorCopy( cg.predictedPlayerState.pmove.velocity, view->velocity );
-	} else if( view->type == VIEWDEF_CAMERA ) {
-		view->refdef.fov_x = CG_DemoCam_GetOrientation( view->origin, view->angles, view->velocity );
+	} else if( view->type == VIEWDEF_DEMOCAM ) {
+		view->fov_y = WidescreenFov( CG_DemoCam_GetOrientation( view->origin, view->angles, view->velocity ) );
 	}
+
+	view->fov_x = CalcHorizontalFov( view->fov_y, scr_vrect.width, scr_vrect.height );
+
+	CG_asSetupCamera( view );
 
 	Matrix3_FromAngles( view->angles, view->axis );
 	if( view->flipped ) {
 		VectorInverse( &view->axis[AXIS_RIGHT] );
 	}
 
-	// view rectangle size
-	view->refdef.x = scr_vrect.x;
-	view->refdef.y = scr_vrect.y;
-	view->refdef.width = scr_vrect.width;
-	view->refdef.height = scr_vrect.height;
-	view->refdef.time = cg.time;
-	view->refdef.areabits = cg.frame.areabits;
-	view->refdef.scissor_x = scr_vrect.x;
-	view->refdef.scissor_y = scr_vrect.y;
-	view->refdef.scissor_width = scr_vrect.width;
-	view->refdef.scissor_height = scr_vrect.height;
-
-	view->refdef.fov_y = CalcFov( view->refdef.fov_x, view->refdef.width, view->refdef.height );
-
-	AdjustFov( &view->refdef.fov_x, &view->refdef.fov_y, view->refdef.width, view->refdef.height, false );
-
-	view->fracDistFOV = tan( view->refdef.fov_x * ( M_PI / 180 ) * 0.5f );
-
-	view->refdef.minLight = 0.3f;
+	view->fracDistFOV = tan( DEG2RAD( view->fov_x ) * 0.5f );
 
 	if( view->thirdperson ) {
 		CG_ThirdPersonOffsetView( view );
@@ -932,28 +955,12 @@ static void CG_SetupViewDef( cg_viewdef_t *view, int type ) {
 	if( !view->playerPrediction ) {
 		cg.predictedWeaponSwitch = 0;
 	}
-
-	VectorCopy( cg.view.origin, view->refdef.vieworg );
-	Matrix3_Copy( cg.view.axis, view->refdef.viewaxis );
-	VectorInverse( &view->refdef.viewaxis[AXIS_RIGHT] );
-
-	view->refdef.colorCorrection = NULL;
-	if( cg_colorCorrection->integer ) {
-		int colorCorrection = GS_ColorCorrection();
-		if( ( colorCorrection > 0 ) && ( colorCorrection < MAX_IMAGES ) ) {
-			view->refdef.colorCorrection = cgs.imagePrecache[colorCorrection];
-		}
-	}
 }
 
 /*
 * CG_RenderView
 */
-#define WAVE_AMPLITUDE  0.015   // [0..1]
-#define WAVE_FREQUENCY  0.6     // [0..1]
 void CG_RenderView( int frameTime, int realFrameTime, int64_t realTime, int64_t serverTime, float stereo_separation, unsigned extrapolationTime ) {
-	refdef_t *rd = &cg.view.refdef;
-
 	// update time
 	cg.realTime = realTime;
 	cg.frameTime = frameTime;
@@ -989,10 +996,10 @@ void CG_RenderView( int frameTime, int realFrameTime, int64_t realTime, int64_t 
 
 			if( cg.time >= cg.frame.serverTime ) {
 				cg.xerpSmoothFrac = (double)( cg.time - cg.frame.serverTime ) / (double)( cgs.extrapolationTime );
-				clamp( cg.xerpSmoothFrac, 0.0f, 1.0f );
+				Q_clamp( cg.xerpSmoothFrac, 0.0f, 1.0f );
 			} else {
 				cg.xerpSmoothFrac = (double)( cg.frame.serverTime - cg.time ) / (double)( cgs.extrapolationTime );
-				clamp( cg.xerpSmoothFrac, -1.0f, 0.0f );
+				Q_clamp( cg.xerpSmoothFrac, -1.0f, 0.0f );
 				cg.xerpSmoothFrac = 1.0f - cg.xerpSmoothFrac;
 			}
 
@@ -1014,7 +1021,7 @@ void CG_RenderView( int frameTime, int realFrameTime, int64_t realTime, int64_t 
 		}
 	}
 
-	clamp( cg.lerpfrac, 0.0f, 1.0f );
+	Q_clamp( cg.lerpfrac, 0.0f, 1.0f );
 
 	if( !cgs.configStrings[CS_WORLDMODEL][0] ) {
 		CG_AddLocalSounds();
@@ -1027,7 +1034,7 @@ void CG_RenderView( int frameTime, int realFrameTime, int64_t realTime, int64_t 
 	}
 
 	// bring up the game menu after reconnecting
-	if( !cgs.tv && !cgs.demoPlaying ) {
+	if( !cgs.demoPlaying ) {
 		if( ISREALSPECTATOR() && !cg.firstFrame ) {
 			if( !cgs.gameMenuRequested ) {
 				trap_Cmd_ExecuteText( EXEC_NOW, "gamemenu\n" );
@@ -1072,9 +1079,9 @@ void CG_RenderView( int frameTime, int realFrameTime, int64_t realTime, int64_t 
 	trap_R_ClearScene();
 
 	if( CG_DemoCam_Update() ) {
-		CG_SetupViewDef( &cg.view, CG_DemoCam_GetViewType() );
+		CG_SetupViewDef( &cg.view, CG_DemoCam_GetViewType(), stereo_separation );
 	} else {
-		CG_SetupViewDef( &cg.view, VIEWDEF_PLAYERVIEW );
+		CG_SetupViewDef( &cg.view, VIEWDEF_PLAYERVIEW, stereo_separation );
 	}
 
 	CG_LerpEntities();  // interpolate packet entities positions
@@ -1097,23 +1104,11 @@ void CG_RenderView( int frameTime, int realFrameTime, int64_t realTime, int64_t 
 	CG_AddTest();
 #endif
 
-	// offset vieworg appropriately if we're doing stereo separation
-	VectorMA( cg.view.origin, stereo_separation, &cg.view.axis[AXIS_RIGHT], rd->vieworg );
-
-	AnglesToAxis( cg.view.angles, rd->viewaxis );
-
-	rd->rdflags = CG_RenderFlags();
-
-	// warp if underwater
-	if( rd->rdflags & RDF_UNDERWATER ) {
-		float phase = rd->time * 0.001 * WAVE_FREQUENCY * M_TWOPI;
-		float v = WAVE_AMPLITUDE * ( sin( phase ) - 1.0 ) + 1;
-		rd->fov_x *= v;
-		rd->fov_y *= v;
-	}
-
 	CG_AddLocalSounds();
+
 	CG_SetSceneTeamColors(); // update the team colors in the renderer
+
+	CG_SetupRefDef( &cg.view );
 
 	trap_R_RenderScene( &cg.view.refdef );
 

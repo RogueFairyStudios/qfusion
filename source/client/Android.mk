@@ -7,6 +7,8 @@ ifdef QFUSION_APPLICATION_VERSION_HEADER
   LOCAL_CFLAGS += -DAPPLICATION_VERSION_HEADER=\"$(QFUSION_APPLICATION_VERSION_HEADER)\"
 endif
 
+LOCAL_C_INCLUDES := $(QFUSION_PATH)/third-party/miniz/amalgamation $(LOCAL_PATH)
+
 LOCAL_LDLIBS := -landroid -llog -lz
 LOCAL_STATIC_LIBRARIES := curl
 LOCAL_WHOLE_STATIC_LIBRARIES := android_native_app_glue
@@ -29,13 +31,13 @@ LOCAL_SRC_FILES := \
   qalgo/base64.c \
   qalgo/glob.c \
   qalgo/hash.c \
-  qalgo/half_float.c \
   qalgo/md5.c \
   qalgo/q_trie.c \
   $(addprefix qcommon/,$(notdir $(wildcard $(LOCAL_PATH)/qcommon/*.c))) \
   $(addprefix server/,$(notdir $(wildcard $(LOCAL_PATH)/server/*.c))) \
   unix/unix_fs.c \
   unix/unix_net.c \
-  unix/unix_threads.c
+  unix/unix_threads.c \
+  $(QFUSION_PATH)/third-party/miniz/amalgamation/miniz.c
 
 include $(BUILD_SHARED_LIBRARY)

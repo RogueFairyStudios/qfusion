@@ -40,7 +40,7 @@ static int loadmodel_numsurfelems;
 static elem_t *loadmodel_surfelems;
 
 static int loadmodel_numlightmaps;
-static mlightmapRect_t *loadmodel_lightmapRects;
+static lightmapRect_t *loadmodel_lightmapRects;
 
 static int loadmodel_numshaderrefs;
 static mshaderref_t *loadmodel_shaderrefs;
@@ -301,7 +301,7 @@ static void Mod_LoadFaces( const lump_t *l ) {
 		int fogNum;
 		mshaderref_t *shaderRef;
 		shaderType_e shaderType;
-		mlightmapRect_t *lmRects[MAX_LIGHTMAPS];
+		lightmapRect_t *lmRects[MAX_LIGHTMAPS];
 		int lightmaps[MAX_LIGHTMAPS];
 		uint8_t lightmapStyles[MAX_LIGHTMAPS], vertexStyles[MAX_LIGHTMAPS];
 
@@ -405,7 +405,7 @@ static void Mod_LoadVertexes( const lump_t *l ) {
 			out_colors[3] = in->color[3];
 		} else if( r_lighting_grayscale->integer ) {
 			vec_t grey = ColorGrayscale( in->color );
-			out_colors[0] = out_colors[1] = out_colors[2] = bound( 0, grey, 255 );
+			out_colors[0] = out_colors[1] = out_colors[2] = Q_bound( 0, grey, 255 );
 			out_colors[3] = in->color[3];
 		} else {
 			out_colors[0] = in->color[0];
@@ -473,7 +473,7 @@ static void Mod_LoadVertexes_RBSP( const lump_t *l ) {
 				out_colors[j][3] = in->color[j][3];
 			} else if( r_lighting_grayscale->integer ) {
 				vec_t grey = ColorGrayscale( in->color[j] );
-				out_colors[j][0] = out_colors[j][1] = out_colors[j][2] = bound( 0, grey, 255 );
+				out_colors[j][0] = out_colors[j][1] = out_colors[j][2] = Q_bound( 0, grey, 255 );
 				out_colors[j][3] = in->color[j][3];
 			} else {
 				out_colors[j][0] = in->color[j][0];
@@ -511,15 +511,25 @@ static void Mod_LoadSubmodels( const lump_t *l ) {
 	loadbmodel->inlines = mod_inline;
 
 	for( i = 0; i < count; i++, in++, out++ ) {
+		vec3_t origin, mins, maxs;
+
 		mod_inline[i].extradata = bmodel + i;
 
 		for( j = 0; j < 3; j++ ) {
 			// spread the mins / maxs by a pixel
 			out->mins[j] = LittleFloat( in->mins[j] ) - 1;
 			out->maxs[j] = LittleFloat( in->maxs[j] ) + 1;
+			origin[j] = (out->mins[j] + out->maxs[j]) * 0.5f;
 		}
 
-		out->radius = RadiusFromBounds( out->mins, out->maxs );
+		// the bounds are from world to local coordinates
+		// otherwise bmodel radius isn't going make any sense
+		for( j = 0; j < 3; j++ ) {
+			mins[j] = out->mins[j] - origin[j];
+			maxs[j] = out->maxs[j] - origin[j];
+		}
+
+		out->radius = RadiusFromBounds( mins, maxs );
 		out->firstModelSurface = LittleLong( in->firstface );
 		out->numModelSurfaces = LittleLong( in->numfaces );
 	}
@@ -587,7 +597,7 @@ static int Mod_AddUpdatePatchGroup( const rdface_t *in ) {
 		lodMaxs[i] = in->maxs[i];
 	}
 
-	subdivLevel = bound( SUBDIVISIONS_MIN, r_subdivisions->value, SUBDIVISIONS_MAX );
+	subdivLevel = Q_bound( SUBDIVISIONS_MIN, r_subdivisions->value, SUBDIVISIONS_MAX );
 	inFirstVert = LittleLong( in->firstvert );
 
 	// find the degree of subdivision in the u and v directions
@@ -684,7 +694,7 @@ void Mod_CreateMeshForSurface( const rdface_t *in, msurface_t *out, int patchGro
 			}
 			for( j = 0; j < MAX_LIGHTMAPS && in->vertexStyles[j] != 255; j++ )
 				bufSize += numVerts * sizeof( byte_vec4_t );
-			bufSize = ALIGN( bufSize, sizeof( elem_t ) ) + numElems * sizeof( elem_t );
+			bufSize = Q_ALIGN( bufSize, sizeof( elem_t ) ) + numElems * sizeof( elem_t );
 			buffer = ( uint8_t * )Mod_Malloc( loadmodel, bufSize );
 			bufPos = 0;
 
@@ -789,7 +799,7 @@ void Mod_CreateMeshForSurface( const rdface_t *in, msurface_t *out, int patchGro
 					}
 				}
 
-				bufSize = ALIGN( bufPos, sizeof( elem_t ) ) + numElems * sizeof( elem_t );
+				bufSize = Q_ALIGN( bufPos, sizeof( elem_t ) ) + numElems * sizeof( elem_t );
 				buffer = ( uint8_t * )Mod_Malloc( loadmodel, bufSize );
 				memcpy( buffer, oldBuffer, bufSize );
 				R_Free( oldBuffer );
@@ -813,7 +823,7 @@ void Mod_CreateMeshForSurface( const rdface_t *in, msurface_t *out, int patchGro
 			}
 
 			// compute new elems
-			bufPos = ALIGN( bufPos, sizeof( elem_t ) );
+			bufPos = Q_ALIGN( bufPos, sizeof( elem_t ) );
 			mesh->elems = elems = ( elem_t * )( buffer + bufPos ); bufPos += numElems * sizeof( elem_t );
 			for( v = 0, i = 0; v < size[1] - 1; v++ ) {
 				for( u = 0; u < size[0] - 1; u++ ) {
@@ -877,8 +887,8 @@ void Mod_CreateMeshForSurface( const rdface_t *in, msurface_t *out, int patchGro
 			}
 			for( j = 0; j < MAX_LIGHTMAPS && in->vertexStyles[j] != 255; j++ )
 				bufSize += numVerts * sizeof( byte_vec4_t );
-			bufSize = ALIGN( bufSize, sizeof( elem_t ) ) + numElems * sizeof( elem_t );
-			bufSize = ALIGN( bufSize, 16 ) + numFoliageInstances * sizeof( instancePoint_t );
+			bufSize = Q_ALIGN( bufSize, sizeof( elem_t ) ) + numElems * sizeof( elem_t );
+			bufSize = Q_ALIGN( bufSize, 16 ) + numFoliageInstances * sizeof( instancePoint_t );
 
 			buffer = ( uint8_t * )Mod_Malloc( loadmodel, bufSize );
 			bufPos = 0;
@@ -919,7 +929,7 @@ void Mod_CreateMeshForSurface( const rdface_t *in, msurface_t *out, int patchGro
 				memcpy( mesh->colorsArray[j], loadmodel_colors_array[j] + firstVert, numVerts * sizeof( byte_vec4_t ) );
 			}
 
-			bufPos = ALIGN( bufPos, sizeof( elem_t ) );
+			bufPos = Q_ALIGN( bufPos, sizeof( elem_t ) );
 			mesh->elems = ( elem_t * )( buffer + bufPos ); bufPos += numElems * sizeof( elem_t );
 			memcpy( mesh->elems, loadmodel_surfelems + firstElem, numElems * sizeof( elem_t ) );
 
@@ -946,7 +956,7 @@ void Mod_CreateMeshForSurface( const rdface_t *in, msurface_t *out, int patchGro
 				instancePoint_t *instance;
 
 				out->numInstances = numFoliageInstances;
-				out->instances = ( instancePoint_t * )( buffer + ALIGN( bufPos, 16 ) );
+				out->instances = ( instancePoint_t * )( buffer + Q_ALIGN( bufPos, 16 ) );
 
 				for( j = 0; j < out->numInstances; j++ ) {
 					// add pseudo random YAW-angle rotation
@@ -1424,29 +1434,33 @@ static void Mod_LoadVisibility( const lump_t *l ) {
 /*
 * Mod_LoadEntities
 */
-static void Mod_LoadEntities( const lump_t *l, vec3_t gridSize, vec3_t ambient, vec3_t outline ) {
+static void Mod_LoadEntities( const lump_t *l, vec3_t gridSize, vec3_t ambient ) {
 	int n;
 	char *data;
 	bool isworld;
-	float gridsizef[3] = { 0, 0, 0 }, colorf[3] = { 0, 0, 0 }, ambientf = 0;
+	float gridsizef[3] = { 0, 0, 0 }, colorf[3] = { 0, 0, 0 }, originf[3], ambientf = 0;
 	char key[MAX_KEY], value[MAX_VALUE], *token;
 	float celcolorf[3] = { 0, 0, 0 };
 
 	assert( gridSize );
 	assert( ambient );
-	assert( outline );
 
 	VectorClear( gridSize );
 	VectorClear( ambient );
-	VectorClear( outline );
 
 	data = (char *)mod_base + l->fileofs;
-	if( !data || !data[0] ) {
+	if( !data[0] ) {
 		return;
 	}
 
+	loadbmodel->entityStringLen = l->filelen;
+	loadbmodel->entityString = ( char * )Mod_Malloc( loadmodel, l->filelen + 1 );
+	memcpy( loadbmodel->entityString, data, l->filelen );
+	loadbmodel->entityString[l->filelen] = '\0';
+
 	for(; ( token = COM_Parse( &data ) ) && token[0] == '{'; ) {
 		isworld = false;
+		VectorClear( colorf );
 
 		while( 1 ) {
 			token = COM_Parse( &data );
@@ -1490,16 +1504,18 @@ static void Mod_LoadEntities( const lump_t *l, vec3_t gridSize, vec3_t ambient, 
 					sscanf( value, "%3i %3i %3i", &colori[0], &colori[1], &colori[2] );
 					VectorCopy( colori, colorf );
 				}
+			} else if( !strcmp( key, "color" ) ) {
+				n = sscanf( value, "%8f %8f %8f", &colorf[0], &colorf[1], &colorf[2] );
+				if( n != 3 ) {
+					int colori[3] = { 0, 0, 0 };
+					sscanf( value, "%3i %3i %3i", &colori[0], &colori[1], &colori[2] );
+					VectorCopy( colori, colorf );
+				}
+			} else if( !strcmp( key, "origin" ) ) {
+				n = sscanf( value, "%8f %8f %8f", &originf[0], &originf[1], &originf[2] );
 			} else if( !strcmp( key, "_forceclear" ) ) {
 				if( atof( value ) != 0 ) {
 					mapConfig.forceClear = true;
-				}
-			} else if( !strcmp( key, "_outlinecolor" ) ) {
-				n = sscanf( value, "%8f %8f %8f", &celcolorf[0], &celcolorf[1], &celcolorf[2] );
-				if( n != 3 ) {
-					int celcolori[3] = { 0, 0, 0 };
-					sscanf( value, "%3i %3i %3i", &celcolori[0], &celcolori[1], &celcolori[2] );
-					VectorCopy( celcolori, celcolorf );
 				}
 			}
 		}
@@ -1515,8 +1531,6 @@ static void Mod_LoadEntities( const lump_t *l, vec3_t gridSize, vec3_t ambient, 
 			if( max( celcolorf[0], max( celcolorf[1], celcolorf[2] ) ) > 1.0f ) {
 				VectorScale( celcolorf, 1.0f / 255.0f, celcolorf );   // [0..1] RGB -> [0..255] RGB
 			}
-			VectorCopy( celcolorf, outline );
-			break;
 		}
 	}
 }
@@ -1529,7 +1543,7 @@ static void Mod_ApplySuperStylesToFace( const rdface_t *in, msurface_t *out ) {
 	float *lmArray;
 	uint8_t *lmlayersArray;
 	mesh_t *mesh = &out->mesh;
-	mlightmapRect_t *lmRects[MAX_LIGHTMAPS];
+	lightmapRect_t *lmRects[MAX_LIGHTMAPS];
 	int lightmaps[MAX_LIGHTMAPS];
 	uint8_t lightmapStyles[MAX_LIGHTMAPS], vertexStyles[MAX_LIGHTMAPS];
 
@@ -1567,7 +1581,7 @@ static void Mod_ApplySuperStylesToFace( const rdface_t *in, msurface_t *out ) {
 /*
 * Mod_Finish
 */
-static void Mod_Finish( const lump_t *faces, const lump_t *light, vec3_t gridSize, vec3_t ambient, vec3_t outline ) {
+static void Mod_Finish( const lump_t *faces, const lump_t *light, vec3_t gridSize, vec3_t ambient ) {
 	unsigned int i, j;
 	msurface_t *surf;
 	mfog_t *testFog;
@@ -1609,13 +1623,8 @@ static void Mod_Finish( const lump_t *faces, const lump_t *light, vec3_t gridSiz
 		}
 		mapConfig.averageLightingIntensity /= (float)loadbmodel->numlightgridelems;
 		mapConfig.averageLightingIntensity *= 1.5f;
-		clamp( mapConfig.averageLightingIntensity, 0.0f, 1.0f );
+		Q_clamp( mapConfig.averageLightingIntensity, 0.0f, 1.0f );
 	}
-
-	// outline color
-	for( i = 0; i < 3; i++ )
-		mapConfig.outlineColor[i] = (uint8_t)( bound( 0, outline[i] * 255.0f, 255 ) );
-	mapConfig.outlineColor[3] = 255;
 
 	for( i = 0, testFog = loadbmodel->fogs; i < loadbmodel->numfogs; testFog++, i++ ) {
 		if( !testFog->shader ) {
@@ -1652,12 +1661,6 @@ static void Mod_Finish( const lump_t *faces, const lump_t *light, vec3_t gridSiz
 		Mod_ApplySuperStylesToFace( in, surf );
 
 		shader = surf->shader;
-
-		// force outlines hack for old maps
-		if( !mapConfig.forceWorldOutlines
-			&& shader && ( shader->flags & SHADER_FORCE_OUTLINE_WORLD )  ) {
-			mapConfig.forceWorldOutlines = true;
-		}
 
 		if( globalFog && surf->mesh.numVerts != 0 && surf->fog != testFog ) {
 			if( shader && !( shader->flags & SHADER_SKY ) && !shader->fog_dist ) {
@@ -1707,13 +1710,10 @@ static void Mod_Finish( const lump_t *faces, const lump_t *light, vec3_t gridSiz
 void Mod_LoadQ3BrushModel( model_t *mod, model_t *parent, void *buffer, bspFormatDesc_t *format ) {
 	int i;
 	dheader_t *header;
-	vec3_t gridSize, ambient, outline;
+	vec3_t gridSize, ambient;
 
 	mod->type = mod_brush;
 	mod->registrationSequence = rsh.registrationSequence;
-	if( rsh.worldModel != NULL ) {
-		ri.Com_Error( ERR_DROP, "Loaded a brush model after the world" );
-	}
 
 	loadmodel = mod;
 
@@ -1729,7 +1729,7 @@ void Mod_LoadQ3BrushModel( model_t *mod, model_t *parent, void *buffer, bspForma
 	// load into heap
 	Mod_LoadSubmodels( &header->lumps[LUMP_MODELS] );
 	Mod_LoadVisibility( &header->lumps[LUMP_VISIBILITY] );
-	Mod_LoadEntities( &header->lumps[LUMP_ENTITIES], gridSize, ambient, outline );
+	Mod_LoadEntities( &header->lumps[LUMP_ENTITIES], gridSize, ambient );
 	Mod_LoadLighting( &header->lumps[LUMP_LIGHTING], &header->lumps[LUMP_FACES] );
 	Mod_LoadShaderrefs( &header->lumps[LUMP_SHADERREFS] );
 	Mod_PreloadFaces( &header->lumps[LUMP_FACES] );
@@ -1756,5 +1756,5 @@ void Mod_LoadQ3BrushModel( model_t *mod, model_t *parent, void *buffer, bspForma
 		Mod_LoadLightArray();
 	}
 
-	Mod_Finish( &header->lumps[LUMP_FACES], &header->lumps[LUMP_LIGHTING], gridSize, ambient, outline );
+	Mod_Finish( &header->lumps[LUMP_FACES], &header->lumps[LUMP_LIGHTING], gridSize, ambient );
 }

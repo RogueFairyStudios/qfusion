@@ -215,7 +215,7 @@ static float G_CheckArmor( edict_t *ent, float damage, int dflags ) {
 		return 0.0f;
 	}
 
-	maxsave = min( damage, client->resp.armor / g_armor_degradation->value );
+	maxsave = fmin( damage, client->resp.armor / g_armor_degradation->value );
 
 	if( maxsave <= 0.0f ) {
 		return 0.0f;
@@ -302,10 +302,12 @@ static void G_KnockBackPush( edict_t *targ, edict_t *attacker, const vec3_t base
 	}
 
 	VectorNormalize2( basedir, dir );
+	const float VERTICAL_KNOCKBACK_SCALE = 1.25f;
+	dir[2] *= VERTICAL_KNOCKBACK_SCALE;
 
 	if( targ->r.client && targ != attacker && !( dflags & DAMAGE_KNOCKBACK_SOFT ) ) {
 		targ->r.client->ps.pmove.stats[PM_STAT_KNOCKBACK] = 3 * knockback;
-		clamp( targ->r.client->ps.pmove.stats[PM_STAT_KNOCKBACK], 100, 250 );
+		Q_clamp( targ->r.client->ps.pmove.stats[PM_STAT_KNOCKBACK], 100, 250 );
 	}
 
 	VectorMA( targ->velocity, push, dir, targ->velocity );
@@ -370,7 +372,7 @@ void G_Damage( edict_t *targ, edict_t *inflictor, edict_t *attacker, const vec3_
 			targ->r.client->ps.pmove.stats[PM_STAT_STUN] += (int)stun;
 		}
 
-		clamp( targ->r.client->ps.pmove.stats[PM_STAT_STUN], 0, MAX_STUN_TIME );
+		Q_clamp( targ->r.client->ps.pmove.stats[PM_STAT_STUN], 0, MAX_STUN_TIME );
 	}
 
 	// dont count self-damage cause it just adds the same to both stats
@@ -530,6 +532,12 @@ void G_Damage( edict_t *targ, edict_t *inflictor, edict_t *attacker, const vec3_
 			targ->flags |= FL_NO_KNOCKBACK;
 		}
 		G_Killed( targ, inflictor, attacker, HEALTH_TO_INT( take ), point, mod );
+	} else if( targ->r.svflags & SVF_MONSTER ) {
+		M_ReactToDamage( targ, attacker );
+
+		if (!(targ->monsterinfo.aiflags & AI_DUCKED) && (take)) {
+			G_CallPain( targ, attacker, knockback, take );
+		}
 	} else {
 		G_CallPain( targ, attacker, knockback, take );
 	}
@@ -538,77 +546,38 @@ void G_Damage( edict_t *targ, edict_t *inflictor, edict_t *attacker, const vec3_
 /*
 * G_SplashFrac
 */
-void G_SplashFrac( const vec3_t origin, const vec3_t mins, const vec3_t maxs, const vec3_t point, float maxradius, vec3_t pushdir, float *kickFrac, float *dmgFrac ) {
-#define VERTICALBIAS 0.65f // 0...1
-#define CAPSULEDISTANCE
-
-//#define SPLASH_HDIST_CLAMP 0
-	vec3_t boxcenter = { 0, 0, 0 };
-	vec3_t hitpoint;
+float G_SplashFrac( const vec3_t origin, const vec3_t mins, const vec3_t maxs, const vec3_t center, const vec3_t point, float maxradius,vec3_t pushdir ) {
+	vec3_t boxcenter;
 	float distance;
-	int i;
 	float innerradius;
 	float refdistance;
+	float frac;
 
-	if( maxradius <= 0 ) {
-		if( kickFrac ) {
-			*kickFrac = 0;
-		}
-		if( dmgFrac ) {
-			*dmgFrac = 0;
-		}
-		if( pushdir ) {
-			VectorClear( pushdir );
-		}
-		return;
+	if( pushdir ) {
+		VectorClear( pushdir );
 	}
 
-	VectorCopy( point, hitpoint );
+	if( maxradius <= 0 ) {
+		return 0;
+	}
 
 	innerradius = ( maxs[0] + maxs[1] - mins[0] - mins[1] ) * 0.25;
-
-#ifdef CAPSULEDISTANCE
 
 	// Find the distance to the closest point in the capsule contained in the player bbox
 	// modify the origin so the inner sphere acts as a capsule
 	VectorCopy( origin, boxcenter );
-	boxcenter[2] = hitpoint[2];
-	clamp( boxcenter[2], ( origin[2] + mins[2] ) + innerradius, ( origin[2] + maxs[2] ) - innerradius );
-#else
-
-	// find center of the box
-	for( i = 0; i < 3; i++ )
-		boxcenter[i] = origin[i] + ( 0.5f * ( maxs[i] + mins[i] ) );
-#endif
+	boxcenter[2] = point[2];
+	Q_clamp( boxcenter[2], ( origin[2] + mins[2] ) + innerradius, ( origin[2] + maxs[2] ) - innerradius );
 
 	// find push intensity
-	distance = Distance( boxcenter, hitpoint );
-
+	distance = Distance( boxcenter, point );
 	if( distance >= maxradius ) {
-		if( kickFrac ) {
-			*kickFrac = 0;
-		}
-		if( dmgFrac ) {
-			*dmgFrac = 0;
-		}
-		if( pushdir ) {
-			VectorClear( pushdir );
-		}
-		return;
+		return 0;
 	}
 
 	refdistance = innerradius;
 	if( refdistance >= maxradius ) {
-		if( kickFrac ) {
-			*kickFrac = 0;
-		}
-		if( dmgFrac ) {
-			*dmgFrac = 0;
-		}
-		if( pushdir ) {
-			VectorClear( pushdir );
-		}
-		return;
+		return 0;
 	}
 
 	maxradius -= refdistance;
@@ -618,81 +587,22 @@ void G_SplashFrac( const vec3_t origin, const vec3_t mins, const vec3_t maxs, co
 	}
 
 	distance = maxradius - distance;
-	clamp( distance, 0, maxradius );
+	Q_clamp( distance, 0, maxradius );
 
-	if( dmgFrac ) {
-		// soft sin curve
-		*dmgFrac = sin( DEG2RAD( ( distance / maxradius ) * 80 ) );
-		clamp( *dmgFrac, 0.0f, 1.0f );
-	}
-
-	if( kickFrac ) {
-		// linear kick fraction
-		float kick = ( distance / maxradius );
-
-		kick *= kick;
-
-		//kick = maxradius / distance;
-		clamp( kick, 0, 1 );
-
-		// half linear half exponential
-		//*kickFrac =  ( kick + ( kick * kick ) ) * 0.5f;
-
-		// linear
-		*kickFrac = kick;
-
-		clamp( *kickFrac, 0.0f, 1.0f );
-	}
-
-	//if( dmgFrac && kickFrac )
-	//	G_Printf( "SPLASH: dmgFrac %.2f kickFrac %.2f\n", *dmgFrac, *kickFrac );
+	// soft sin curve
+	frac = sin( DEG2RAD( ( distance / maxradius ) * 80 ) );
+	Q_clamp( frac, 0.0f, 1.0f );
 
 	// find push direction
 
 	if( pushdir ) {
-#ifdef CAPSULEDISTANCE
-
-		// find real center of the box again
-		for( i = 0; i < 3; i++ )
-			boxcenter[i] = origin[i] + ( 0.5f * ( maxs[i] + mins[i] ) );
-#endif
-
-#ifdef VERTICALBIAS
-
-		// move the center up for the push direction
-		if( origin[2] + maxs[2] > boxcenter[2] ) {
-			boxcenter[2] += VERTICALBIAS * ( ( origin[2] + maxs[2] ) - boxcenter[2] );
-		}
-#endif // VERTICALBIAS
-
-#ifdef SPLASH_HDIST_CLAMP
-
-		// if pushed from below, hack the hitpoint to limit the side push direction
-		if( hitpoint[2] < boxcenter[2] && SPLASH_HDIST_CLAMP >= 0 ) {
-			// do not allow the hitpoint to be further away
-			// than SPLASH_HDIST_CLAMP in the horizontal axis
-			vec3_t vec;
-
-			vec[0] = hitpoint[0];
-			vec[1] = hitpoint[1];
-			vec[2] = boxcenter[2];
-
-			if( Distance( boxcenter, vec ) > SPLASH_HDIST_CLAMP ) {
-				VectorSubtract( vec, boxcenter, pushdir );
-				VectorNormalize( pushdir );
-				VectorMA( boxcenter, SPLASH_HDIST_CLAMP, pushdir, hitpoint );
-				hitpoint[2] = point[2]; // restore the original hitpoint height
-			}
-		}
-#endif // SPLASH_HDIST_CLAMP
-
-		VectorSubtract( boxcenter, hitpoint, pushdir );
+		// use center of mass, which isn't necessary located at box center
+		// for players, this is the viewpoint
+		VectorSubtract( center, point, pushdir );
 		VectorNormalize( pushdir );
 	}
-
-#undef VERTICALBIAS
-#undef CAPSULEDISTANCE
-#undef SPLASH_HDIST_CLAMP
+	
+	return frac;
 }
 
 /*
@@ -702,21 +612,19 @@ void G_RadiusDamage( edict_t *inflictor, edict_t *attacker, cplane_t *plane, edi
 	int i, numtouch;
 	int touch[MAX_EDICTS];
 	edict_t *ent = NULL;
-	float dmgFrac, kickFrac, damage, knockback, stun;
+	float dmgFrac, damage, knockback, stun;
 	vec3_t pushDir;
 	int timeDelta;
 
-	float maxdamage, mindamage, maxknockback, minknockback, maxstun, minstun, radius;
+	assert( inflictor != NULL );
 
-	assert( inflictor );
-
-	maxdamage = inflictor->projectileInfo.maxDamage;
-	mindamage = inflictor->projectileInfo.minDamage;
-	maxknockback = inflictor->projectileInfo.maxKnockback;
-	minknockback = inflictor->projectileInfo.minKnockback;
-	maxstun = inflictor->projectileInfo.stun;
-	minstun = 1;
-	radius = inflictor->projectileInfo.radius;
+	float maxdamage = inflictor->projectileInfo.maxDamage;
+	float mindamage = inflictor->projectileInfo.minDamage;
+	float maxknockback = inflictor->projectileInfo.maxKnockback;
+	float minknockback = inflictor->projectileInfo.minKnockback;
+	float maxstun = inflictor->projectileInfo.stun;
+	float minstun = 1;
+	float radius = inflictor->projectileInfo.radius;
 
 	if( radius <= 1.0f || ( maxdamage <= 0.0f && maxknockback <= 0.0f ) ) {
 		return;
@@ -739,34 +647,15 @@ void G_RadiusDamage( edict_t *inflictor, edict_t *attacker, cplane_t *plane, edi
 			timeDelta = inflictor->timeDelta;
 		}
 
-		G_SplashFrac4D( ENTNUM( ent ), inflictor->s.origin, radius, pushDir, &kickFrac, &dmgFrac, timeDelta );
+		dmgFrac = G_SplashFrac4D( ENTNUM( ent ), inflictor->s.origin, radius, pushDir, attacker == ent && attacker->r.client, timeDelta );
 
-		damage = max( 0, mindamage + ( ( maxdamage - mindamage ) * dmgFrac ) );
-		stun = max( 0, minstun + ( ( maxstun - minstun ) * dmgFrac ) );
-		knockback = max( 0, minknockback + ( ( maxknockback - minknockback ) * kickFrac ) );
+		damage = fmax( 0, mindamage + ( ( maxdamage - mindamage ) * dmgFrac ) );
+		stun = fmax( 0, minstun + ( ( maxstun - minstun ) * dmgFrac ) );
+		knockback = fmax( 0, minknockback + ( ( maxknockback - minknockback ) * dmgFrac) );
 
-		// weapon jumps hack : when knockback on self, use strong weapon definition
 		if( ent == attacker && ent->r.client ) {
-			gs_weapon_definition_t *weapondef = NULL;
-			if( inflictor->s.type == ET_ROCKET ) {
-				weapondef = GS_GetWeaponDef( WEAP_ROCKETLAUNCHER );
-			} else if( inflictor->s.type == ET_GRENADE ) {
-				weapondef = GS_GetWeaponDef( WEAP_GRENADELAUNCHER );
-			} else if( inflictor->s.type == ET_PLASMA ) {
-				weapondef = GS_GetWeaponDef( WEAP_PLASMAGUN );
-			} else if( inflictor->s.type == ET_BLASTER ) {
-				weapondef = GS_GetWeaponDef( WEAP_GUNBLADE );
-			}
-
-			if( weapondef ) {
-				G_SplashFrac4D( ENTNUM( ent ), inflictor->s.origin, radius, pushDir, &kickFrac, NULL, 0 );
-
-				minknockback = weapondef->firedef.minknockback;
-				maxknockback = weapondef->firedef.knockback;
-				clamp_high( minknockback, maxknockback );
-				knockback = ( minknockback + ( (float)( maxknockback - minknockback ) * kickFrac ) ) * g_self_knockback->value;
-				damage *= weapondef->firedef.selfdamage;
-			}
+			knockback *= g_self_knockback->value;
+			damage *= inflictor->projectileInfo.selfDamage;
 		}
 
 		if( knockback < 1.0f ) {

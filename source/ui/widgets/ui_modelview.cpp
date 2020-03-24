@@ -17,7 +17,7 @@
 namespace WSWUI
 {
 
-using namespace Rocket::Core;
+using namespace Rml::Core;
 
 // forward-declare the instancer for keyselects
 class UI_ModelviewWidgetInstancer;
@@ -45,7 +45,7 @@ public:
 		: Element( tag ),
 		time( 0 ), AutoRotationCenter( false ), Initialized( false ), RecomputePosition( false ),
 		BonePoses( NULL ), skel( NULL ), modelName( "" ), skinName( "" ),
-		fov_x( 30.0f ), fov_y( 0.0f ) {
+		fov_x( 0.0f ), fov_y( 0.0f ) {
 		memset( &entity, 0, sizeof( entity ) );
 		memset( &refdef, 0, sizeof( refdef ) );
 		entity.renderfx = RF_NOSHADOW | RF_FORCENOLOD | RF_MINLIGHT;
@@ -108,7 +108,7 @@ public:
 			entity.origin[0] = xoffset;
 		}
 
-		Rocket::Core::Vector2f offset = GetAbsoluteOffset( Rocket::Core::Box::CONTENT );
+		Rml::Core::Vector2f offset = GetAbsoluteOffset( Rml::Core::Box::CONTENT );
 		refdef.x = offset.x;
 		refdef.y = offset.y;
 
@@ -133,62 +133,54 @@ public:
 		time = curtime;
 	}
 
-	virtual void OnPropertyChange( const Rocket::Core::PropertyNameList& changed_properties ) {
-		Element::OnPropertyChange( changed_properties );
+	virtual void OnAttributeChange( const Rml::Core::ElementAttributes& changed_attributes ) {
+		Element::OnAttributeChange( changed_attributes );
 
-		for( Rocket::Core::PropertyNameList::const_iterator it = changed_properties.begin(); it != changed_properties.end(); ++it ) {
-			if( *it == "model-modelpath" ) {
-				modelName = GetProperty( *it )->Get<Rocket::Core::String>();
+		// LATER
+		for( auto it = changed_attributes.begin(); it != changed_attributes.end(); ++it ) {
+			if( it->first == "model-modelpath" ) {
+				modelName = GetAttribute< Rml::Core::String >( it->first, "" );
 				Initialized = false;
-			} else if( *it == "model-skinpath" && GetProperty( *it )->Get<Rocket::Core::String>().Length() > 0 ) {
-				skinName = GetProperty( *it )->Get<Rocket::Core::String>();
+			} else if( it->first == "model-skinpath" ) {
+				skinName = GetAttribute< Rml::Core::String >( it->first, "" );
 				Initialized = false;
-			} else if( *it == "model-scale" ) {
-				entity.scale = GetProperty( *it )->Get<float>();
-			} else if( *it == "model-outline-height" ) {
-				entity.outlineHeight = GetProperty( *it )->Get<float>();
-			} else if( *it == "model-outline-color" ) {
-				Rocket::Core::Colourb color = GetProperty( *it )->Get<Rocket::Core::Colourb>();
-				Vector4Set( entity.outlineRGBA, color.red, color.green, color.blue, color.alpha );
-			} else if( *it == "model-shader-color" ) {
-				Rocket::Core::Colourb color = GetProperty( *it )->Get<Rocket::Core::Colourb>();
-				int shaderColor = COM_ValidatePlayerColor( COLOR_RGB( color.red, color.green, color.blue ) );
-				Vector4Set( entity.shaderRGBA, COLOR_R( shaderColor ), COLOR_G( shaderColor ), COLOR_B( shaderColor ), color.alpha );
-			} else if( *it == "model-fov-x" ) {
-				const Property *prop = GetProperty( *it );
-				if( prop->unit == Property::KEYWORD ) {
-					fov_x = 0.0f;
-				} else {
-					fov_x = prop->Get<float>();
-					clamp( fov_x, 1.0f, 179.0f );
+			} else if( it->first == "model-scale" ) {
+				entity.scale = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "model-outline-height" ) {
+				entity.outlineHeight = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "model-shader-color" ) {
+				int color = COM_ReadColorRGBString( GetAttribute< Rml::Core::String >( it->first, "" ).c_str() );
+				int shaderColor = COM_ValidatePlayerColor( color );
+				Vector4Set( entity.shaderRGBA, COLOR_R( shaderColor ), COLOR_G( shaderColor ), COLOR_B( shaderColor ), 255 );
+			} else if( it->first == "model-fov-x" ) {
+				fov_x = GetAttribute< float >( it->first, 0.0 );
+				if( fov_x != 0.0f ) {
+					Q_clamp( fov_x, 1.0f, 179.0f );
 				}
 				RecomputePosition = true;
-			} else if( *it == "model-fov-y" ) {
-				const Property *prop = GetProperty( *it );
-				if( prop->unit == Property::KEYWORD ) {
-					fov_y = 0.0f;
-				} else {
-					fov_y = prop->Get<float>();
-					clamp( fov_y, 1.0f, 179.0f );
+			} else if( it->first == "model-fov-y" ) {
+				fov_y = GetAttribute< float >( it->first, 0.0 );
+				if( fov_y != 0.0f ) {
+					Q_clamp( fov_y, 1.0f, 179.0f );
 				}
 				RecomputePosition = true;
-			} else if( *it == "model-rotation-pitch" ) {
-				baseangles[0] = GetProperty( *it )->Get<float>();
+			} else if( it->first == "model-rotation-pitch" ) {
+				baseangles[0] = GetAttribute< float >( it->first, 0.0 );
 				RecomputePosition = true;
-			} else if( *it == "model-rotation-yaw" ) {
-				baseangles[1] = GetProperty( *it )->Get<float>();
+			} else if( it->first == "model-rotation-yaw" ) {
+				baseangles[1] = GetAttribute< float >( it->first, 0.0 );
 				RecomputePosition = true;
-			} else if( *it == "model-rotation-roll" ) {
-				baseangles[2] = GetProperty( *it )->Get<float>();
+			} else if( it->first == "model-rotation-roll" ) {
+				baseangles[2] = GetAttribute< float >( it->first, 0.0 );
 				RecomputePosition = true;
-			} else if( *it == "model-rotation-speed-pitch" ) {
-				anglespeed[0] = GetProperty( *it )->Get<float>();
-			} else if( *it == "model-rotation-speed-yaw" ) {
-				anglespeed[1] = GetProperty( *it )->Get<float>();
-			} else if( *it == "model-rotation-speed-roll" ) {
-				anglespeed[2] = GetProperty( *it )->Get<float>();
-			} else if( *it == "model-rotation-autocenter" ) {
-				AutoRotationCenter = ( GetProperty( *it )->Get<Rocket::Core::String>().ToLower() == "true" );
+			} else if( it->first == "model-rotation-speed-pitch" ) {
+				anglespeed[0] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "model-rotation-speed-yaw" ) {
+				anglespeed[1] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "model-rotation-speed-roll" ) {
+				anglespeed[2] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "model-rotation-autocenter" ) {
+				AutoRotationCenter = HasAttribute( it->first );
 			}
 		}
 
@@ -228,7 +220,7 @@ public:
 	}
 
 	// Called for every event sent to this element or one of its descendants.
-	void ProcessEvent( Rocket::Core::Event& evt ) {
+	void ProcessEvent( Rml::Core::Event& evt ) {
 		if( evt == "invalidate" ) {
 			Initialized = false;
 			if( BonePoses ) {
@@ -249,13 +241,13 @@ private:
 		BonePoses = __new__( UI_BonePoses )();
 		RecomputePosition = true;
 
-		if( modelName.Empty() ) {
+		if( modelName.empty() ) {
 			entity.model = NULL;
 			return;
 		}
 
-		entity.model = trap::R_RegisterModel( modelName.CString() );
-		entity.customSkin = trap::R_RegisterSkinFile( skinName.CString() );
+		entity.model = trap::R_RegisterModel( modelName.c_str() );
+		entity.customSkin = trap::R_RegisterSkinFile( skinName.c_str() );
 	}
 
 	void ComputePosition() {
@@ -264,21 +256,22 @@ private:
 		}
 
 		// refdef setup
-		Rocket::Core::Vector2f box = GetBox().GetSize( Rocket::Core::Box::CONTENT );
+		Rml::Core::Vector2f box = GetBox().GetSize( Rml::Core::Box::CONTENT );
 		refdef.x = 0;
 		refdef.y = 0;
 		refdef.width = box.x;
 		refdef.height = box.y;
 
 		refdef.fov_x = fov_x;
-		refdef.fov_y = fov_y;
-		if( !refdef.fov_x && !refdef.fov_y ) {
-			refdef.fov_x = 30.0f;
+		refdef.fov_y = WidescreenFov( fov_y );
+		if( !fov_x && !fov_y ) {
+			refdef.fov_y = WidescreenFov( 30.0f );
 		}
+
 		if( !refdef.fov_x ) {
-			refdef.fov_x = CalcFov( refdef.fov_y, refdef.height, refdef.width );
+			refdef.fov_x = CalcHorizontalFov( refdef.fov_y, refdef.width, refdef.height );
 		} else if( !refdef.fov_y ) {
-			refdef.fov_y = CalcFov( refdef.fov_x, refdef.width, refdef.height );
+			refdef.fov_y = CalcVerticalFov( refdef.fov_x, refdef.width, refdef.height );
 		}
 
 		skel = NULL;
@@ -309,36 +302,18 @@ class UI_ModelviewWidgetInstancer : public ElementInstancer
 {
 public:
 	UI_ModelviewWidgetInstancer() : ElementInstancer() {
-		StyleSheetSpecification::RegisterProperty( "model-modelpath", "", false ).AddParser( "string" );
-		StyleSheetSpecification::RegisterProperty( "model-skinpath", "", false ).AddParser( "string" );
-		StyleSheetSpecification::RegisterProperty( "model-fov-x", "30", false ).AddParser( "keyword", "auto" ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "model-fov-y", "auto", false ).AddParser( "keyword", "auto" ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "model-scale", "1", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "model-outline-height", "0.3", false ).AddParser( "number" ); // DEFAULT_OUTLINE_HEIGHT
-		StyleSheetSpecification::RegisterProperty( "model-outline-color", "#404040FF", false ).AddParser( "color" );
-		StyleSheetSpecification::RegisterProperty( "model-shader-color", "#FFFFFFFF", false ).AddParser( "color" );
-		StyleSheetSpecification::RegisterProperty( "model-rotation-pitch", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "model-rotation-yaw", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "model-rotation-roll", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "model-rotation-speed-pitch", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "model-rotation-speed-yaw", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "model-rotation-speed-roll", "0", false ).AddParser( "number" );
 	}
 
 	// Rocket overrides
-	virtual Element *InstanceElement( Element *parent, const String &tag, const XMLAttributes &attr ) {
+	virtual ElementPtr InstanceElement( Element *parent, const String &tag, const XMLAttributes &attr ) override {
 		UI_ModelviewWidget *modelview = __new__( UI_ModelviewWidget )( tag );
 		UI_Main::Get()->getRocket()->registerElementDefaults( modelview );
-		return modelview;
+		return ElementPtr( modelview );
 	}
 
-	virtual void ReleaseElement( Element *element ) {
+	virtual void ReleaseElement( Element *element ) override {
 		// then delete
 		__delete__( element );
-	}
-
-	virtual void Release() {
-		__delete__( this );
 	}
 
 private:
@@ -348,8 +323,6 @@ private:
 
 ElementInstancer *GetModelviewInstancer( void ) {
 	ElementInstancer *instancer = __new__( UI_ModelviewWidgetInstancer )();
-
-	// instancer->RemoveReference();
 	return instancer;
 }
 

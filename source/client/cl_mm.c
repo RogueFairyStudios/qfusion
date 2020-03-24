@@ -142,21 +142,6 @@ static void cl_mm_StringCopy( const char *in, char **pout ) {
 	*pout = out;
 }
 
-static clientRating_t *cl_ratingCopy( clientRating_t *other ) {
-	return cl_ratingAlloc( other->gametype, other->rating, other->deviation, other->uuid );
-}
-
-// free the list of clientRatings
-static void cl_ratingsFree( clientRating_t *list ) {
-	clientRating_t *next;
-
-	while( list ) {
-		next = list->next;
-		Mem_Free( list );
-		list = next;
-	}
-}
-
 // This doesnt update ratings, only inserts new default rating if it doesnt exist
 // if gametype is NULL, use current gametype
 clientRating_t *CL_AddDefaultRating( const char *gametype ) {
@@ -311,8 +296,7 @@ bool CL_MM_Connect( const netadr_t *address ) {
 * (ie logged in to MM or MM is disabled)
 */
 bool CL_MM_CanConnect( void ) {
-	// not sure if we're already aware of server's TV state at this point
-	return ( cl_mm_loginState == LOGIN_STATE_NONE ) || cls.sv_tv;
+	return ( cl_mm_loginState == LOGIN_STATE_NONE );
 }
 
 /*

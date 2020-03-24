@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // snd_mem.c: sound caching
 
 #include "snd_local.h"
+#include "snd_vorbis.h"
 
 /*
 * ResampleSfx
@@ -234,7 +235,6 @@ sfxcache_t *S_LoadSound_Wav( sfx_t *s ) {
 	sc->channels = info.channels;
 	sc->width = info.width;
 	sc->speed = dma.speed;
-	sc->loopstart = info.loopstart < 0 ? sc->length : info.loopstart * ( (double)sc->length / (double)info.samples );
 	s->cache = sc;
 
 	S_Free( data );
@@ -343,9 +343,7 @@ static void FindChunk( char *name ) {
 */
 wavinfo_t GetWavinfo( const char *name, uint8_t *wav, int wavlength ) {
 	wavinfo_t info;
-	int i;
 	int format;
-	int samples;
 
 	memset( &info, 0, sizeof( info ) );
 
@@ -384,25 +382,6 @@ wavinfo_t GetWavinfo( const char *name, uint8_t *wav, int wavlength ) {
 	data_p += 4 + 2;
 	info.width = GetLittleShort() / 8;
 
-	// get cue chunk
-	FindChunk( "cue " );
-	if( data_p ) {
-		data_p += 32;
-		info.loopstart = GetLittleLong();
-
-		// if the next chunk is a LIST chunk, look for a cue length marker
-		FindNextChunk( "LIST" );
-		if( data_p ) {
-			if( !strncmp( (char *) data_p + 28, "mark", 4 ) ) { // this is not a proper parse, but it works with cooledit...
-				data_p += 24;
-				i = GetLittleLong(); // samples in loop
-				info.samples = info.loopstart + i;
-			}
-		}
-	} else {
-		info.loopstart = -1;
-	}
-
 	// find data chunk
 	FindChunk( "data" );
 	if( !data_p ) {
@@ -411,17 +390,159 @@ wavinfo_t GetWavinfo( const char *name, uint8_t *wav, int wavlength ) {
 	}
 
 	data_p += 4;
-	samples = GetLittleLong() / info.width / info.channels;
-
-	if( info.samples ) {
-		if( samples < info.samples ) {
-			S_Error( "Sound %s has a bad loop length", name ); // FIXME: Medar: Should be ERR_DROP?
-		}
-	} else {
-		info.samples = samples;
-	}
+	info.samples = GetLittleLong() / info.width / info.channels;
 
 	info.dataofs = data_p - wav;
 
 	return info;
+}
+
+//=============================================================================
+
+/*
+* SNDOGG_Shutdown
+*/
+void SNDOGG_Shutdown( bool verbose ) {
+}
+
+/*
+* SNDOGG_Init
+*/
+void SNDOGG_Init( bool verbose ) {
+}
+
+static int SNDOGG_Read( bgTrack_t *track, void *ptr, int samples );
+static bool SNDOGG_Reset( bgTrack_t *track );
+static void SNDOGG_FClose( bgTrack_t *track );
+
+/*
+* SNDOGG_Load
+*/
+sfxcache_t *SNDOGG_Load( sfx_t *s ) {
+	sfxcache_t *sc;
+	int channels = 0, rate = 0;
+	short *data;
+	int len, samples;
+
+	assert( s && s->name[0] );
+	assert( !s->cache );
+
+	samples = qvorbis_load_file( s->name, &channels, &rate, &data );
+
+	if( samples < 0 ) {
+		Com_Printf( "Error unsupported .ogg file: %s\n", s->name );
+		return NULL;
+	}
+
+	if( channels != 1 && channels != 2 ) {
+		Com_Printf( "Error unsupported .ogg file (unsupported number of channels: %i): %s\n", channels, s->name );
+		free( data );
+		return NULL;
+	}
+
+	len = (int) ( (double) samples * (double) dma.speed / (double) rate );
+	len = len * 2 * channels;
+
+	sc = s->cache = S_Malloc( len + sizeof( sfxcache_t ) );
+	sc->length = samples;
+	sc->speed = rate;
+	sc->channels = channels;
+	sc->width = 2;
+	if( sc->speed != dma.speed ) {
+		sc->length = ResampleSfx( samples, sc->speed, sc->channels, 2, (uint8_t *)data, sc->data, s->name );
+	} else {
+		memcpy( sc->data, data, len );
+	}
+	sc->speed = dma.speed;
+
+	free( data );
+
+	return sc;
+}
+
+/*
+* SNDOGG_OpenTrack
+*/
+bool SNDOGG_OpenTrack( bgTrack_t *track ) {
+	int file;
+	int rate, channels;
+	const char *real_path;
+	qvorbis_stream_t *v;
+
+	if( !track ) {
+		return false;
+	}
+
+	real_path = track->filename;
+	trap_FS_FOpenFile( real_path, &file, FS_READ | FS_NOSIZE );
+
+	if( !file ) {
+		return false;
+	}
+
+	v = S_Malloc( sizeof( qvorbis_stream_t ) );
+	v->filenum = file;
+
+	if( !qvorbis_stream_init( v, &rate, &channels ) ) {
+		goto error;
+	}
+
+	track->file = file;
+	track->read = SNDOGG_Read;
+	track->reset = SNDOGG_Reset;
+	track->close = SNDOGG_FClose;
+	track->vorbisFile = v;
+
+	track->info.rate = rate;
+	track->info.channels = channels;
+	track->info.width = 2;
+	track->info.dataofs = 0;
+	track->info.samples = 0;
+
+	return true;
+
+error:
+	qvorbis_stream_deinit( v );
+	S_Free( v );
+
+	trap_FS_FCloseFile( file );
+
+	track->file = 0;
+	track->vorbisFile = NULL;
+	track->read = NULL;
+	track->reset = NULL;
+	track->close = NULL;
+
+	return false;
+}
+
+/*
+* SNDOGG_FRead
+*/
+static int SNDOGG_Read( bgTrack_t *track, void *ptr, int samples ) {
+	return qvorbis_stream_read_samples( track->vorbisFile, samples, track->info.channels, track->info.width, ptr );
+}
+
+/*
+* SNDOGG_FSeek
+*/
+static bool SNDOGG_Reset( bgTrack_t *track ) {
+	return qvorbis_stream_reset( track->vorbisFile );
+}
+
+/*
+* SNDOGG_FClose
+*/
+static void SNDOGG_FClose( bgTrack_t *track ) {
+	if( track->vorbisFile != NULL ) {
+		qvorbis_stream_deinit( track->vorbisFile );
+		S_Free( track->vorbisFile );
+	}
+
+	if( track->file ) {
+		trap_FS_FCloseFile( track->file );
+	}
+
+	track->file = 0;
+	track->vorbisFile = 0;
 }

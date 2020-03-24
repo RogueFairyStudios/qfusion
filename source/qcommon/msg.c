@@ -150,7 +150,7 @@ void MSG_WriteFloat( msg_t *msg, float f ) {
 }
 
 void MSG_WriteHalfFloat( msg_t *msg, float f ) {
-	MSG_WriteUint16( msg, Com_FloatToHalf( f ) );
+	MSG_WriteUint16( msg, float_to_half( f ) );
 }
 
 void MSG_WriteDir( msg_t *msg, vec3_t dir ) {
@@ -277,7 +277,7 @@ float MSG_ReadFloat( msg_t *msg ) {
 }
 
 float MSG_ReadHalfFloat( msg_t *msg ) {
-	return Com_HalfToFloat( MSG_ReadUint16( msg ) );
+	return half_to_float( MSG_ReadUint16( msg ) );
 }
 
 void MSG_ReadDir( msg_t *msg, vec3_t dir ) {
@@ -943,6 +943,10 @@ static const msg_field_t ent_state_fields[] = {
 	{ ESOFS( origin2[1] ), 0, 1, WIRE_FLOAT },
 	{ ESOFS( origin2[2] ), 0, 1, WIRE_FLOAT },
 
+	{ ESOFS( origin3[0] ), 0, 1, WIRE_FLOAT },
+	{ ESOFS( origin3[1] ), 0, 1, WIRE_FLOAT },
+	{ ESOFS( origin3[2] ), 0, 1, WIRE_FLOAT },
+
 	{ ESOFS( linearMovementTimeStamp ), 32, 1, WIRE_UBASE128 },
 	{ ESOFS( linearMovement ), 1, 1, WIRE_BOOL },
 	{ ESOFS( linearMovementDuration ), 32, 1, WIRE_UBASE128 },
@@ -968,8 +972,8 @@ static const msg_field_t ent_state_fields[] = {
 /*
 * MSG_WriteEntityNumber
 */
-static void MSG_WriteEntityNumber( msg_t *msg, int number, bool remove, unsigned byteMask ) {
-	MSG_WriteIntBase128( msg, (remove ? 1 : 0) | number << 1 );
+void MSG_WriteEntityNumber( msg_t *msg, int number, bool remove, unsigned byteMask ) {
+	MSG_WriteIntBase128( msg, number * (remove ? -1 : 1) );
 	MSG_WriteUintBase128( msg, byteMask );
 }
 
@@ -1034,10 +1038,14 @@ void MSG_WriteDeltaEntity( msg_t *msg, const entity_state_t *from, const entity_
 int MSG_ReadEntityNumber( msg_t *msg, bool *remove, unsigned *byteMask ) {
 	int number;
 
+	*remove = false;
 	number = (int)MSG_ReadIntBase128( msg );
-	*remove = (number & 1 ? true : false);
-	number = number >> 1;
 	*byteMask = MSG_ReadUintBase128( msg );
+
+	if( number < 0 ) {
+		number *= -1;
+		*remove = true;
+	}
 
 	return number;
 }
@@ -1121,7 +1129,6 @@ static const msg_field_t player_state_msg_fields[] = {
 	{ PSOFS( pmove.velocity[2] ), 0, 1, WIRE_FLOAT },
 
 	{ PSOFS( pmove.pm_time ), 32, 1, WIRE_UBASE128 },
-	{ PSOFS( pmove.skim_time ), 32, 1, WIRE_UBASE128 },
 
 	{ PSOFS( pmove.pm_flags ), 32, 1, WIRE_UBASE128 },
 

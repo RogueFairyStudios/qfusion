@@ -73,6 +73,30 @@ static double asFunc_sqrt( double x ) {
 	return sqrt( x );
 }
 
+static double asFunc_fmax( double x, double y ) {
+	return x > y ? x : y;
+}
+
+static double asFunc_fmin( double x, double y ) {
+	return x < y ? x : y;
+}
+
+static int64_t asFunc_imax( int64_t x, int64_t y ) {
+	return x > y ? x : y;
+}
+
+static int64_t asFunc_imin( int64_t x, int64_t y ) {
+	return x < y ? x : y;
+}
+
+static uint64_t asFunc_umax( uint64_t x, uint64_t y ) {
+	return x > y ? x : y;
+}
+
+static uint64_t asFunc_umin( uint64_t x, uint64_t y ) {
+	return x < y ? x : y;
+}
+
 static double asFunc_ceil( double x ) {
 	return ceil( x );
 }
@@ -91,6 +115,20 @@ static double asFunc_brandom( double min, double max ) {
 
 static int asFunc_rand( void ) {
 	return rand();
+}
+
+static double asFunc_deg2rad( double deg ) {
+	return DEG2RAD( deg );
+}
+
+static double asFunc_rad2deg( double rad ) {
+	return RAD2DEG( rad );
+}
+
+static asvec3_t asFunc_RotatePointAroundVector( const asvec3_t *dir, const asvec3_t *point, float degrees ) {
+	asvec3_t dst;
+	RotatePointAroundVector( dst.v, dir->v, point->v, degrees );
+	return dst;
 }
 
 void PreRegisterMathAddon( asIScriptEngine *engine ) {
@@ -117,10 +155,19 @@ void RegisterMathAddon( asIScriptEngine *engine ) {
 		{ "double atan2( double x, double y )", asFUNCTION( asFunc_atan2 ) },
 		{ "double sqrt( double x )", asFUNCTION( asFunc_sqrt ) },
 		{ "double ceil( double x )", asFUNCTION( asFunc_ceil ) },
+		{ "double max( double x, double y )", asFUNCTION( asFunc_fmax ) },
+		{ "double min( double x, double y )", asFUNCTION( asFunc_fmin ) },
+		{ "double max( int64 x, int64 y )", asFUNCTION( asFunc_imax ) },
+		{ "double min( int64 x, int64 y )", asFUNCTION( asFunc_imin ) },
+		{ "double max( uint64 x, uint64 y )", asFUNCTION( asFunc_umax ) },
+		{ "double min( uint64 x, uint64 y )", asFUNCTION( asFunc_umin ) },
 		{ "double floor( double x )", asFUNCTION( asFunc_floor ) },
 		{ "double random()", asFUNCTION( asFunc_random ) },
 		{ "double brandom( double min, double max )", asFUNCTION( asFunc_brandom ) },
+		{ "double deg2rad( double deg )", asFUNCTION( asFunc_deg2rad ) },
+		{ "double rad2deg( double rad )", asFUNCTION( asFunc_rad2deg ) },
 		{ "int rand()", asFUNCTION( asFunc_rand ) },
+		{ "Vec3 RotatePointAroundVector( const Vec3 &in dir, const Vec3 &in point, float degrees )", asFUNCTION( asFunc_RotatePointAroundVector ) },
 
 		{ NULL, asFUNCTION( 0 ) }
 	}, *func;

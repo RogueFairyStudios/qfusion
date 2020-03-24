@@ -24,7 +24,6 @@ FIXME:  This will be remidied once a native Mac port is complete
 #if defined ( __APPLE__ ) && !defined ( DEDICATED_ONLY )
 #include <SDL.h>
 #include <CoreFoundation/CoreFoundation.h>
-#include <sys/param.h>
 #endif
 
 #include <signal.h>
@@ -32,6 +31,7 @@ FIXME:  This will be remidied once a native Mac port is complete
 #include <limits.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/param.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -43,10 +43,9 @@ FIXME:  This will be remidied once a native Mac port is complete
 #include <errno.h>
 #include <locale.h>
 
-#if defined ( __FreeBSD__ )
-#include <machine/param.h>
+#ifdef ALIGN
+#undef ALIGN
 #endif
-
 #include "../qcommon/qcommon.h"
 #include "glob.h"
 
@@ -134,12 +133,6 @@ void Sys_Init( void ) {
 }
 
 /*
-* Sys_InitDynvars
-*/
-void Sys_InitDynvars( void ) {
-}
-
-/*
 * Sys_Error
 */
 void Sys_Error( const char *format, ... ) {
@@ -194,8 +187,6 @@ void Sys_AppActivate( void ) {
 * Sys_SendKeyEvents
 */
 void Sys_SendKeyEvents( void ) {
-	// grab frame time
-	sys_frame_time = Sys_Milliseconds();
 }
 
 #endif // !defined(USE_SDL2) || defined(DEDICATED_ONLY)

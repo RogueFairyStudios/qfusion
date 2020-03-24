@@ -705,9 +705,9 @@ static void Shader_SkyParmsExt( shader_t *shader, shaderpass_t *pass, const char
 	float skyheight;
 
 	if( custom ) {
-		Shader_ParseCustomSkySides( ptr, shader->skyboxImages, shader->imagetags );
+		Shader_ParseCustomSkySides( ptr, shader->skyParms.images, shader->imagetags );
 	} else {
-		Shader_ParseSkySides( ptr, shader->skyboxImages, shader->imagetags, underscore );
+		Shader_ParseSkySides( ptr, shader->skyParms.images, shader->imagetags, underscore );
 	}
 
 	skyheight = Shader_ParseFloat( ptr );
@@ -715,7 +715,7 @@ static void Shader_SkyParmsExt( shader_t *shader, shaderpass_t *pass, const char
 		skyheight = 512.0f;
 	}
 
-	shader->skyHeight = skyheight;
+	shader->skyParms.height = skyheight;
 	shader->flags |= SHADER_SKY;
 }
 
@@ -729,6 +729,16 @@ static void Shader_SkyParms2( shader_t *shader, shaderpass_t *pass, const char *
 
 static void Shader_SkyParmsSides( shader_t *shader, shaderpass_t *pass, const char **ptr ) {
 	Shader_SkyParmsExt( shader, pass, ptr, true, false );
+}
+
+static void Shader_SkyLightParms( shader_t *shader, shaderpass_t *pass, const char **ptr ) {
+	vec3_t color, dir;
+
+	Shader_ParseVector( ptr, color, 3 );
+	ColorNormalize( color, shader->skyParms.lightColor );
+
+	Shader_ParseVector( ptr, dir, 3 );
+	VectorNormalize2( dir, shader->skyParms.lightDir );
 }
 
 static void Shader_FogParms( shader_t *shader, shaderpass_t *pass, const char **ptr ) {
@@ -955,16 +965,13 @@ static void Shader_SoftParticle( shader_t *shader, shaderpass_t *pass, const cha
 	shader->flags |= SHADER_SOFT_PARTICLE;
 }
 
-static void Shader_ForceWorldOutlines( shader_t *shader, shaderpass_t *pass, const char **ptr ) {
-	shader->flags |= SHADER_FORCE_OUTLINE_WORLD;
-}
-
 static const shaderkey_t shaderkeys[] =
 {
 	{ "cull", Shader_Cull },
 	{ "skyparms", Shader_SkyParms },
 	{ "skyparms2", Shader_SkyParms2 },
 	{ "skyparmssides", Shader_SkyParmsSides },
+	{ "skylightparams", Shader_SkyLightParms },
 	{ "fogparms", Shader_FogParms },
 	{ "nomipmaps", Shader_NoMipMaps },
 	{ "nopicmip", Shader_NoPicMip },
@@ -985,7 +992,6 @@ static const shaderkey_t shaderkeys[] =
 	{ "template", Shader_Template },
 	{ "skip", Shader_Skip },
 	{ "softparticle", Shader_SoftParticle },
-	{ "forceworldoutlines", Shader_ForceWorldOutlines },
 
 	{ NULL, NULL }
 };
@@ -1122,10 +1128,6 @@ static void Shaderpass_AnimClampMap( shader_t *shader, shaderpass_t *pass, const
 
 static void Shaderpass_CubeMap( shader_t *shader, shaderpass_t *pass, const char **ptr ) {
 	Shaderpass_CubeMapExt( shader, pass, IT_CLAMP, TC_GEN_REFLECTION, ptr );
-}
-
-static void Shaderpass_ShadeCubeMap( shader_t *shader, shaderpass_t *pass, const char **ptr ) {
-	Shaderpass_CubeMapExt( shader, pass, IT_CLAMP, TC_GEN_REFLECTION_CELSHADE, ptr );
 }
 
 static void Shaderpass_SurroundMap( shader_t *shader, shaderpass_t *pass, const char **ptr ) {
@@ -1277,46 +1279,6 @@ static void Shaderpass_Distortion( shader_t *shader, shaderpass_t *pass, const c
 		shader->sort = 0; // reset sorting so we can figure it out later. FIXME?
 	}
 	shader->flags |= SHADER_PORTAL | SHADER_PORTAL_CAPTURE | SHADER_PORTAL_CAPTURE2;
-}
-
-// <base> <celshade> [diffuse] [decal] [entitydecal] [stripes] [celllight]
-static void Shaderpass_Celshade( shader_t *shader, shaderpass_t *pass, const char **ptr ) {
-	int i;
-	int flags;
-	char *token;
-
-	R_FreePassCinematics( pass );
-
-	flags = Shader_SetImageFlags( shader ) | IT_SRGB;
-	pass->tcgen = TC_GEN_BASE;
-	pass->flags &= ~( SHADERPASS_LIGHTMAP | SHADERPASS_PORTALMAP );
-	if( pass->rgbgen.type == RGB_GEN_UNKNOWN ) {
-		pass->rgbgen.type = RGB_GEN_IDENTITY;
-	}
-
-	pass->anim_fps = 0;
-	memset( pass->images, 0, sizeof( pass->images ) );
-
-	// at least two valid images are required: 'base' and 'celshade'
-	for( i = 0; i < 2; i++ ) {
-		token = Shader_ParseString( ptr );
-		if( *token && strcmp( token, "-" ) ) {
-			pass->images[i] = Shader_FindImage( shader, token, flags | ( i ? IT_CLAMP | IT_CUBEMAP : 0 ) );
-		}
-	}
-
-	pass->program_type = GLSL_PROGRAM_TYPE_CELSHADE;
-
-	// parse optional images: [diffuse] [decal] [entitydecal] [stripes] [celllight]
-	for( i = 0; i < 5; i++ ) {
-		token = Shader_ParseString( ptr );
-		if( !*token ) {
-			break;
-		}
-		if( strcmp( token, "-" ) ) {
-			pass->images[i + 2] = Shader_FindImage( shader, token, flags | ( i == 4 ? IT_CLAMP | IT_CUBEMAP : 0 ) );
-		}
-	}
 }
 
 static void Shaderpass_RGBGen( shader_t *shader, shaderpass_t *pass, const char **ptr ) {
@@ -1594,8 +1556,6 @@ static void Shaderpass_TcGen( shader_t *shader, shaderpass_t *pass, const char *
 		Shader_ParseVector( ptr, &pass->tcgenVec[4], 4 );
 	} else if( !strcmp( token, "reflection" ) ) {
 		pass->tcgen = TC_GEN_REFLECTION;
-	} else if( !strcmp( token, "celshade" ) ) {
-		pass->tcgen = TC_GEN_REFLECTION_CELSHADE;
 	} else if( !strcmp( token, "surround" ) ) {
 		pass->tcgen = TC_GEN_SURROUND;
 	}
@@ -1624,14 +1584,12 @@ static const shaderkey_t shaderpasskeys[] =
 	{ "map", Shaderpass_Map },
 	{ "animmap", Shaderpass_AnimMap },
 	{ "cubemap", Shaderpass_CubeMap },
-	{ "shadecubemap", Shaderpass_ShadeCubeMap },
 	{ "surroundmap", Shaderpass_SurroundMap },
 	{ "videomap", Shaderpass_VideoMap },
 	{ "clampmap", Shaderpass_ClampMap },
 	{ "animclampmap", Shaderpass_AnimClampMap },
 	{ "material", Shaderpass_Material },
 	{ "distortion", Shaderpass_Distortion },
-	{ "celshade", Shaderpass_Celshade },
 	{ "tcgen", Shaderpass_TcGen },
 	{ "alphagen", Shaderpass_AlphaGen },
 	{ "detail", Shaderpass_Detail },
@@ -1801,7 +1759,7 @@ static unsigned int Shader_GetCache( const char *name, shadercache_t **cache ) {
 	*cache = NULL;
 
 	len = strlen( name );
-	key = COM_SuperFastHash( ( const uint8_t * )name, len, len ) % SHADERCACHE_HASH_SIZE;
+	key = COM_SuperFastHash( ( const uint8_t * )name, len ) % SHADERCACHE_HASH_SIZE;
 	for( c = shadercache_hash[key]; c; c = c->hash_next ) {
 		if( !Q_stricmp( c->name, name ) ) {
 			*cache = c;
@@ -1813,15 +1771,15 @@ static unsigned int Shader_GetCache( const char *name, shadercache_t **cache ) {
 }
 
 /*
-* R_PrecacheShaders
+* R_InitShaderCache
 */
-static void R_InitShadersCache( void ) {
+static void R_InitShaderCache( void ) {
 	int d;
 	int i, j, k, numfiles;
 	int numfiles_total;
 	const char *fileptr;
 	char shaderPaths[1024];
-	const char *dirs[3] = { "<scripts", ">scripts", "scripts" };
+	const char *dirs[3] = { "<scripts", ">scripts" };
 
 	r_shaderTemplateBuf = NULL;
 
@@ -1830,15 +1788,7 @@ static void R_InitShadersCache( void ) {
 	Com_Printf( "Initializing Shaders:\n" );
 
 	numfiles_total = 0;
-	for( d = 0; d < 3; d++ ) {
-		if( d == 2 ) {
-			// this is a fallback case for older bins that do not support the '<>' prefixes
-			// since we got some files, the binary is sufficiently up to date
-			if( numfiles_total ) {
-				break;
-			}
-		}
-
+	for( d = 0; d < 2; d++ ) {
 		// enumerate shaders
 		numfiles = ri.FS_GetFileList( dirs[d], ".shader", NULL, 0, 0, 0 );
 		numfiles_total += numfiles;
@@ -1870,12 +1820,55 @@ static void R_InitShadersCache( void ) {
 }
 
 /*
+ * R_ShutdownShaderCache
+ */
+static void R_ShutdownShaderCache( void ) {
+	R_Free( r_shaderTemplateBuf );
+
+	r_shaderTemplateBuf = NULL;
+
+	memset( shadercache_hash, 0, sizeof( shadercache_hash ) );
+}
+
+/*
+* R_ReloadShaderCache
+*/
+static void R_ReloadShaderCache( void )
+{
+	int i;
+	shader_t *s;
+	bool forceDefaultOnly = true;
+
+	for( i = 0, s = r_shaders; i < MAX_SHADERS; i++, s++ ) {
+		if( !s->name ) {
+			// free shader
+			continue;
+		}
+		if( s->registrationSequence != rsh.registrationSequence ) {
+			continue;
+		}
+		if( !s->forceDefault ) {
+			forceDefaultOnly = false;
+			break;
+		}
+	}
+
+	if( !forceDefaultOnly ) {
+		return;
+	}
+
+	R_ShutdownShaderCache();
+
+	R_InitShaderCache();
+}
+
+/*
 * R_InitShaders
 */
 void R_InitShaders( void ) {
 	int i;
 
-	R_InitShadersCache();
+	R_InitShaderCache();
 
 	memset( r_shaders, 0, sizeof( r_shaders ) );
 
@@ -1966,7 +1959,7 @@ void R_TouchShader( shader_t *s ) {
 	if( s->flags & SHADER_SKY ) {
 		// touch sky images for this shader
 		for( i = 0; i < 6; i++ ) {
-			image_t *image = s->skyboxImages[i];
+			image_t *image = s->skyParms.images[i];
 			if( image ) {
 				R_TouchImage( image, imagetags );
 			}
@@ -2013,8 +2006,11 @@ void R_FreeUnusedShadersByType( const shaderType_e *types, unsigned int numTypes
 /*
 * R_FreeUnusedShaders
 */
-void R_FreeUnusedShaders( void ) {
+void R_FreeUnusedShaders( void )
+{
 	R_FreeUnusedShadersByType( NULL, 0 );
+
+	R_ReloadShaderCache();
 }
 
 /*
@@ -2032,14 +2028,11 @@ void R_ShutdownShaders( void ) {
 		R_FreeShader( s );
 	}
 
-	R_Free( r_shaderTemplateBuf );
-	R_Free( r_shortShaderName );
+	R_ShutdownShaderCache();
 
-	r_shaderTemplateBuf = NULL;
+	R_Free( r_shortShaderName );
 	r_shortShaderName = NULL;
 	r_shortShaderNameSize = 0;
-
-	memset( shadercache_hash, 0, sizeof( shadercache_hash ) );
 }
 
 static void Shader_Readpass( shader_t *shader, const char **ptr ) {
@@ -2169,8 +2162,6 @@ static void Shader_SetVertexAttribs( shader_t *s ) {
 			s->vattribs |= VATTRIB_NORMAL_BIT | VATTRIB_SVECTOR_BIT | VATTRIB_LMCOORDS0_BIT;
 		} else if( pass->program_type == GLSL_PROGRAM_TYPE_DISTORTION ) {
 			s->vattribs |= VATTRIB_NORMAL_BIT | VATTRIB_SVECTOR_BIT;
-		} else if( pass->program_type == GLSL_PROGRAM_TYPE_CELSHADE ) {
-			s->vattribs |= VATTRIB_TEXCOORDS_BIT | VATTRIB_NORMAL_BIT;
 		}
 
 		switch( pass->rgbgen.type ) {
@@ -2212,7 +2203,6 @@ static void Shader_SetVertexAttribs( shader_t *s ) {
 				s->vattribs |= VATTRIB_NORMAL_BIT;
 				break;
 			case TC_GEN_REFLECTION:
-			case TC_GEN_REFLECTION_CELSHADE:
 				s->vattribs |= VATTRIB_NORMAL_BIT;
 				break;
 			default:
@@ -2273,7 +2263,7 @@ static void Shader_Finish( shader_t *s ) {
 	size = s->numpasses * sizeof( shaderpass_t );
 
 	for( i = 0, pass = r_currentPasses; i < s->numpasses; i++, pass++ ) {
-		size = ALIGN( size, 16 );
+		size = Q_ALIGN( size, 16 );
 
 		// rgbgen args
 		if( pass->rgbgen.type == RGB_GEN_WAVE ||
@@ -2304,7 +2294,7 @@ static void Shader_Finish( shader_t *s ) {
 	memcpy( s->passes, r_currentPasses, s->numpasses * sizeof( shaderpass_t ) );
 
 	for( i = 0, pass = s->passes; i < s->numpasses; i++, pass++ ) {
-		bufferOffset = ALIGN( bufferOffset, 16 );
+		bufferOffset = Q_ALIGN( bufferOffset, 16 );
 
 		if( pass->rgbgen.type == RGB_GEN_WAVE ||
 			pass->rgbgen.type == RGB_GEN_CONST ) {
@@ -2428,7 +2418,7 @@ void R_UploadCinematicShader( const shader_t *shader ) {
 
 	// upload cinematics
 	for( j = 0, pass = shader->passes; j < shader->numpasses; j++, pass++ ) {
-		if( pass->cin ) {
+ 		if( pass->cin ) {
 			R_UploadCinematic( pass->cin );
 		}
 	}
@@ -2662,14 +2652,14 @@ create_default:
 				break;
 			case SHADER_TYPE_OPAQUE_ENV:
 				// pad to 4 floats
-				data = R_Malloc( ALIGN( sizeof( shaderpass_t ), 16 ) + 4 * sizeof( float ) + shortname_length + 1 );
+				data = R_Malloc( Q_ALIGN( sizeof( shaderpass_t ), 16 ) + 4 * sizeof( float ) + shortname_length + 1 );
 
 				s->vattribs = VATTRIB_POSITION_BIT;
 				s->sort = SHADER_SORT_OPAQUE;
 				s->flags = SHADER_CULL_FRONT | SHADER_DEPTHWRITE;
 				s->numpasses = 1;
 				s->passes = ( shaderpass_t * )( data );
-				s->passes[0].rgbgen.args = ( float * )( (uint8_t *)data + ALIGN( sizeof( shaderpass_t ), 16 ) );
+				s->passes[0].rgbgen.args = ( float * )( (uint8_t *)data + Q_ALIGN( sizeof( shaderpass_t ), 16 ) );
 				s->name = ( char * )( s->passes[0].rgbgen.args + 4 );
 				strcpy( s->name, shortname );
 
@@ -2709,6 +2699,24 @@ create_default:
 				s->numpasses = 0;
 				s->name = ( char * )data;
 				strcpy( s->name, shortname );
+				break;
+			case SHADER_TYPE_DEPTHONLY:
+				data = R_Malloc( shortname_length + 1 + sizeof( shaderpass_t ) );
+
+				s->vattribs = VATTRIB_POSITION_BIT;
+				s->sort = SHADER_SORT_PORTAL;
+				s->flags = SHADER_CULL_FRONT | SHADER_DEPTHWRITE;
+				s->numpasses = 1;
+				s->passes = ( shaderpass_t * )data;
+				s->name = ( char * )( s->passes + 1 );
+				strcpy( s->name, shortname );
+
+				pass = &s->passes[0];
+				pass->rgbgen.type = RGB_GEN_IDENTITY;
+				pass->alphagen.type = ALPHA_GEN_IDENTITY;
+				pass->tcgen = TC_GEN_BASE;
+				pass->flags = GLSTATE_NO_COLORWRITE|GLSTATE_DEPTHWRITE;
+				pass->images[0] = rsh.whiteTexture;
 				break;
 			default:
 				break;
@@ -2768,6 +2776,35 @@ shader_t *R_ShaderById( unsigned int id ) {
 }
 
 /*
+* R_ShaderNoDlight
+*/
+bool R_ShaderNoDlight( const shader_t *shader ) {
+	if( Shader_DepthRead( shader ) || !Shader_DepthWrite( shader ) ) {
+		return true;
+	}
+	if( ( shader->sort < SHADER_SORT_OPAQUE ) || ( shader->sort > SHADER_SORT_BANNER ) ) {
+		return true;
+	}
+	return false;
+}
+
+/*
+* R_ShaderNoShadow
+*/
+bool R_ShaderNoShadow( const shader_t *shader ) {
+	if( ( shader->flags & (SHADER_CULL_BACK|SHADER_CULL_FRONT) ) == SHADER_CULL_BACK ) {
+		return true;
+	}
+	if( Shader_DepthRead( shader ) || !Shader_DepthWrite( shader ) ) {
+		return true;
+	}
+	if( ( shader->sort < SHADER_SORT_OPAQUE ) || ( shader->sort > SHADER_SORT_BANNER ) ) {
+		return true;
+	}
+	return false;
+}
+
+/*
 * R_TouchShadersByName
 */
 void R_TouchShadersByName( const char *name ) {
@@ -2788,7 +2825,7 @@ void R_TouchShadersByName( const char *name ) {
 		return;
 	}
 
-	key = COM_SuperFastHash( ( const uint8_t * )shortName, nameLength, nameLength ) % SHADERS_HASH_SIZE;
+	key = COM_SuperFastHash( ( const uint8_t * )shortName, nameLength ) % SHADERS_HASH_SIZE;
 	hnode = &r_shaders_hash_headnode[key];
 	for( s = hnode->next; s != hnode; s = s->next ) {
 		if( !strcmp( s->name, shortName ) ) {
@@ -2829,7 +2866,7 @@ shader_t *R_LoadShader( const char *name, shaderType_e type, bool forceDefault, 
 	}
 
 	// test if already loaded
-	key = COM_SuperFastHash( ( const uint8_t *)shortname, nameLength, nameLength ) % SHADERS_HASH_SIZE;
+	key = COM_SuperFastHash( ( const uint8_t *)shortname, nameLength ) % SHADERS_HASH_SIZE;
 	hnode = &r_shaders_hash_headnode[key];
 
 	// scan all instances of the same shader for exact match of the type
@@ -2875,6 +2912,7 @@ shader_t *R_LoadShader( const char *name, shaderType_e type, bool forceDefault, 
 	s->next = next;
 	s->prev = prev;
 	s->id = s - r_shaders;
+	s->forceDefault = forceDefault;
 	R_LoadShaderReal( s, shortname, nameLength, name, type, text );
 
 	// add to linked lists
@@ -2929,7 +2967,7 @@ shader_t *R_RegisterRawPic_( const char *name, int width, int height, uint8_t *d
 * Registers default 2D shader with base image provided as raw color data.
 */
 shader_t *R_RegisterRawPic( const char *name, int width, int height, uint8_t *data, int samples ) {
-	return R_RegisterRawPic_( name, width, height, data, 0, samples );
+	return R_RegisterRawPic_( name, width, height, data, IT_SRGB, samples );
 }
 
 /*
@@ -2938,7 +2976,7 @@ shader_t *R_RegisterRawPic( const char *name, int width, int height, uint8_t *da
 * Registers default alpha mask shader with base image provided as raw alpha values.
 */
 shader_t *R_RegisterRawAlphaMask( const char *name, int width, int height, uint8_t *data ) {
-	return R_RegisterRawPic_( name, width, height, data, IT_ALPHAMASK, 1 );
+	return R_RegisterRawPic_( name, width, height, data, IT_SRGB|IT_ALPHAMASK, 1 );
 }
 
 /*

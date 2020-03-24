@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "client.h"
 
 static bool in_initialized = false;
+static int64_t sys_frame_time;
 
 cvar_t *cl_ucmdMaxResend;
 
@@ -37,7 +38,9 @@ static void CL_CreateNewUserCommand( int realMsec );
 */
 void CL_MouseSet( int mx, int my, bool showCursor ) {
 	if( cls.key_dest == key_menu ) {
-		CL_UIModule_MouseSet( mx, my, showCursor );
+		CL_UIModule_MouseSet( true, mx, my, showCursor );
+	} else if( cls.key_dest == key_game ) {
+		CL_UIModule_MouseSet( false, mx, my, showCursor );
 	}
 }
 
@@ -48,18 +51,18 @@ void CL_TouchEvent( int id, touchevent_t type, int x, int y, int64_t time ) {
 	switch( cls.key_dest ) {
 		case key_game:
 		{
-			bool toQuickMenu = false;
+			bool toOverlayMenu = false;
 
-			if( SCR_IsQuickMenuShown() && !CL_GameModule_IsTouchDown( id ) ) {
+			if( SCR_HaveOverlay() && !CL_GameModule_IsTouchDown( id ) ) {
 				if( CL_UIModule_IsTouchDownQuick( id ) ) {
-					toQuickMenu = true;
+					toOverlayMenu = true;
 				}
 
 				// if the quick menu has consumed the touch event, don't send the event to the game
-				toQuickMenu |= CL_UIModule_TouchEventQuick( id, type, x, y );
+				toOverlayMenu |= CL_UIModule_TouchEventQuick( id, type, x, y );
 			}
 
-			if( !toQuickMenu ) {
+			if( !toOverlayMenu ) {
 				CL_GameModule_TouchEvent( id, type, x, y, time );
 			}
 		}
@@ -73,7 +76,7 @@ void CL_TouchEvent( int id, touchevent_t type, int x, int y, int64_t time ) {
 			break;
 
 		case key_menu:
-			CL_UIModule_TouchEvent( id, type, x, y );
+			CL_UIModule_TouchEvent( false, id, type, x, y );
 			break;
 
 		default:
@@ -112,18 +115,18 @@ void CL_ClearInputState( void ) {
 static void CL_UpdateGameInput( int frameTime ) {
 	int mx, my;
 
-	IN_GetMouseMovement( &mx, &my );
-
 	// refresh input in cgame
-	CL_GameModule_InputFrame( frameTime );
+	CL_GameModule_InputFrame( sys_frame_time );
 
 	if( cls.key_dest == key_menu ) {
-		CL_UIModule_MouseMove( frameTime, mx, my );
+		IN_GetMousePosition( &mx, &my );
+		CL_UIModule_MouseSet( true, mx, my, true );
 	} else {
+		IN_GetMouseMovement( &mx, &my );
 		CL_GameModule_MouseMove( mx, my );
 	}
 
-	if( cls.key_dest == key_game || ( ( cls.key_dest == key_console ) && Cvar_Value( "in_grabinconsole" ) != 0 ) ) {
+	if( cls.key_dest == key_game ) {
 		CL_GameModule_AddViewAngles( cl.viewangles );
 	}
 }
@@ -138,11 +141,11 @@ void CL_UserInputFrame( int realMsec ) {
 	// get new key events
 	Sys_SendKeyEvents();
 
+	// grab frame time
+	sys_frame_time = Sys_Milliseconds();
+
 	// get new key events from mice or external controllers
 	IN_Commands();
-
-	// refresh mouse angles and movement velocity
-	CL_UpdateGameInput( realMsec );
 
 	// create a new usercmd_t structure for this frame
 	CL_CreateNewUserCommand( realMsec );
@@ -211,9 +214,9 @@ static void CL_SetUcmdMovement( usercmd_t *ucmd ) {
 		CL_GameModule_AddMovement( movement );
 	}
 
-	ucmd->sidemove = bound( -127, (int)(movement[0] * 127.0f), 127 );
-	ucmd->forwardmove = bound( -127, (int)(movement[1] * 127.0f), 127 );
-	ucmd->upmove = bound( -127, (int)(movement[2] * 127.0f), 127 );
+	ucmd->sidemove = Q_bound( -127, (int)(movement[0] * 127.0f), 127 );
+	ucmd->forwardmove = Q_bound( -127, (int)(movement[1] * 127.0f), 127 );
+	ucmd->upmove = Q_bound( -127, (int)(movement[2] * 127.0f), 127 );
 }
 
 /*
@@ -238,9 +241,16 @@ static void CL_SetUcmdButtons( usercmd_t *ucmd ) {
 * Updates ucmd to use the most recent viewangles.
 */
 static void CL_RefreshUcmd( usercmd_t *ucmd, int msec, bool ready ) {
-	ucmd->msec += msec;
+	static int64_t old_ucmd_frame_time;
+	int ucmd_frame_time = sys_frame_time - old_ucmd_frame_time;
+	old_ucmd_frame_time = sys_frame_time;
 
-	if( ucmd->msec ) {
+	// refresh mouse angles and movement velocity
+	if( ucmd_frame_time > 0 ) {
+		ucmd->msec += ucmd_frame_time;
+
+		CL_UpdateGameInput( ucmd_frame_time );
+
 		CL_SetUcmdMovement( ucmd );
 
 		CL_SetUcmdButtons( ucmd );

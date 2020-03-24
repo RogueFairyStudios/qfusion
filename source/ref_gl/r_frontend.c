@@ -164,16 +164,16 @@ rserr_t RF_Init( const char *applicationName, const char *screenshotPrefix, int 
 	return rserr_ok;
 }
 
-rserr_t RF_SetMode( int x, int y, int width, int height, int displayFrequency, bool fullScreen, bool stereo, bool borderless ) {
+rserr_t RF_SetMode( int x, int y, int width, int height, bool fullScreen, bool stereo, bool borderless ) {
 	rserr_t err;
 
 	if( glConfig.width == width && glConfig.height == height && glConfig.fullScreen != fullScreen ) {
-		return GLimp_SetFullscreenMode( displayFrequency, fullScreen );
+		return GLimp_SetFullscreen( fullScreen, x, y );
 	}
 
 	RF_AdapterShutdown( &rrf.adapter );
 
-	err = R_SetMode( x, y, width, height, displayFrequency, fullScreen, stereo, borderless );
+	err = R_SetMode( x, y, width, height, fullScreen, stereo, borderless );
 	if( err != rserr_ok ) {
 		return err;
 	}
@@ -195,7 +195,7 @@ rserr_t RF_SetMode( int x, int y, int width, int height, int displayFrequency, b
 	}
 
 	rrf.frame->Clear( rrf.frame );
-	memset( rrf.customColors, 255, sizeof( rrf.customColors ) );
+	memset( rrf.customColors, 0, sizeof( rrf.customColors ) );
 
 	rrf.adapter.owner = (void *)&rrf;
 	if( RF_AdapterInit( &rrf.adapter ) != true ) {
@@ -271,16 +271,6 @@ static void RF_CheckCvars( void ) {
 		r_texturemode->modified = false;
 		rrf.adapter.cmdPipe->SetTextureMode( rrf.adapter.cmdPipe, r_texturemode->string );
 	}
-
-	// keep r_outlines_cutoff value in sane bounds to prevent wallhacking
-	if( r_outlines_scale->modified ) {
-		if( r_outlines_scale->value < 0 ) {
-			ri.Cvar_ForceSet( r_outlines_scale->name, "0" );
-		} else if( r_outlines_scale->value > 3 ) {
-			ri.Cvar_ForceSet( r_outlines_scale->name, "3" );
-		}
-		r_outlines_scale->modified = false;
-	}
 }
 
 void RF_BeginFrame( float cameraSeparation, bool forceClear, bool forceVsync, bool uncappedFPS ) {
@@ -347,6 +337,9 @@ void RF_EndRegistration( void ) {
 	R_EndRegistration();
 	rrf.adapter.cmdPipe->EndRegistration( rrf.adapter.cmdPipe );
 	RF_AdapterWait( &rrf.adapter );
+
+	// reset the cache of custom colors, otherwise RF_SetCustomColor might fail to do anything
+	memset( rrf.customColors, 0, sizeof( rrf.customColors ) );
 }
 
 void RF_RegisterWorldModel( const char *model ) {
@@ -532,7 +525,7 @@ void RF_StopAviDemo( void ) {
 	RF_AdapterWait( &rrf.adapter );
 }
 
-void RF_TransformVectorToScreen( const refdef_t *rd, const vec3_t in, vec2_t out ) {
+void RF_TransformVectorToScreen( const refdef_t *rd, const vec3_t in, vec3_t out ) {
 	mat4_t p, m;
 	vec4_t temp, temp2;
 
@@ -546,7 +539,7 @@ void RF_TransformVectorToScreen( const refdef_t *rd, const vec3_t in, vec2_t out
 	temp[3] = 1.0f;
 
 	if( rd->rdflags & RDF_USEORTHO ) {
-		Matrix4_OrthogonalProjection( rd->ortho_x, rd->ortho_x, rd->ortho_y, rd->ortho_y,
+		Matrix4_OrthoProjection( rd->ortho_x, rd->ortho_x, rd->ortho_y, rd->ortho_y,
 									  -4096.0f, 4096.0f, p );
 	} else {
 		Matrix4_InfinitePerspectiveProjection( rd->fov_x, rd->fov_y, Z_NEAR, rrf.cameraSeparation,
@@ -557,7 +550,7 @@ void RF_TransformVectorToScreen( const refdef_t *rd, const vec3_t in, vec2_t out
 		p[0] = -p[0];
 	}
 
-	Matrix4_Modelview( rd->vieworg, rd->viewaxis, m );
+	Matrix4_QuakeModelview( rd->vieworg, rd->viewaxis, m );
 
 	Matrix4_Multiply_Vector( m, temp, temp2 );
 	Matrix4_Multiply_Vector( p, temp2, temp );
@@ -568,6 +561,7 @@ void RF_TransformVectorToScreen( const refdef_t *rd, const vec3_t in, vec2_t out
 
 	out[0] = rd->x + ( temp[0] / temp[3] + 1.0f ) * rd->width * 0.5f;
 	out[1] = glConfig.height - ( rd->y + ( temp[1] / temp[3] + 1.0f ) * rd->height * 0.5f );
+	out[2] = ( temp[2] / temp[3] + 1.0f ) * 0.5f;
 }
 
 bool RF_LerpTag( orientation_t *orient, const model_t *mod, int oldframe, int frame, float lerpfrac, const char *name ) {
@@ -593,7 +587,7 @@ bool RF_LerpTag( orientation_t *orient, const model_t *mod, int oldframe, int fr
 }
 
 void RF_LightForOrigin( const vec3_t origin, vec3_t dir, vec4_t ambient, vec4_t diffuse, float radius ) {
-	R_LightForOrigin( origin, dir, ambient, diffuse, radius, false );
+	R_LightForOrigin( origin, dir, ambient, diffuse, radius, false, false );
 }
 
 /*
@@ -615,7 +609,9 @@ shader_t *RF_GetShaderForOrigin( const vec3_t origin ) {
 			dir[i] = j;
 			VectorMA( origin, 64, dir, end );
 
-			R_TraceLine( &tr, origin, end, 0 );
+			if( !R_TraceLine( &tr, origin, end, 0 ) ) {
+				continue;
+			}
 			if( !tr.shader ) {
 				continue;
 			}
@@ -635,4 +631,8 @@ struct cinematics_s *RF_GetShaderCinematic( shader_t *shader ) {
 		return NULL;
 	}
 	return R_GetCinematicById( shader->cin );
+}
+
+void RF_SetTransformMatrix( const float *m ) {
+	rrf.frame->SetTransformMatrix( rrf.frame, m );
 }

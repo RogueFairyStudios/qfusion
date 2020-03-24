@@ -25,12 +25,12 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "widgets/ui_keyselect.h"
 #include "kernel/ui_utils.h"
 #include "../gameshared/q_keycodes.h"
-#include <Rocket/Core/Input.h>
+#include <RmlUi/Core/Input.h>
 
 namespace WSWUI
 {
 
-using namespace Rocket::Core;
+using namespace Rml::Core;
 
 UI_KeySelect::UI_KeySelect( const String &tag, const String &bind, UI_KeySelectInstancer *instancer )
 	: Element( tag ), cmd( bind ) {
@@ -43,6 +43,10 @@ UI_KeySelect::UI_KeySelect( const String &tag, const String &bind, UI_KeySelectI
 
 	InitializeBinds();
 	WriteText();
+
+	this->AddEventListener(Rml::Core::EventId::Blur, this);
+	this->AddEventListener(Rml::Core::EventId::Focus, this);
+	this->AddEventListener("keyselect", this, true);
 }
 
 UI_KeySelect::~UI_KeySelect() {}
@@ -56,7 +60,7 @@ void UI_KeySelect::InitializeBinds( void ) {
 		if( !b ) {
 			continue;
 		}
-		if( !Q_stricmp( b, this->cmd.CString() ) ) {
+		if( !Q_stricmp( b, this->cmd.c_str() ) ) {
 			boundKey[count] = j;
 			count++;
 			if( count == 2 ) {
@@ -70,9 +74,8 @@ void UI_KeySelect::InitializeBinds( void ) {
 int UI_KeySelect::GetKey( int index ) {
 	if( !index ) {
 		return boundKey[0];
-	} else {
-		return boundKey[1];
 	}
+	return boundKey[1];
 }
 
 // release key with index 0 or 1
@@ -193,7 +196,7 @@ void UI_KeySelect::SetKeybind( int key ) {
 
 	// apply the bind
 	char bindCmd[1024];
-	Q_snprintfz( bindCmd, sizeof( bindCmd ), "bind \"%s\" \"%s\"\n", trap::Key_KeynumToString( key ), cmd.CString() );
+	Q_snprintfz( bindCmd, sizeof( bindCmd ), "bind \"%s\" \"%s\"\n", trap::Key_KeynumToString( key ), cmd.c_str() );
 	trap::Cmd_ExecuteText( EXEC_INSERT, bindCmd );
 
 	Blur();
@@ -202,16 +205,11 @@ void UI_KeySelect::SetKeybind( int key ) {
 /// Called for every event sent to this element or one of its descendants.
 /// @param[in] event The event to process.
 void UI_KeySelect::ProcessEvent( Event& event ) {
-	RocketModule *rocketModule = GetRocketModule();
-	int contextId = rocketModule->idForContext( GetContext() );
-
 	if( event == "blur" ) {
 		focusMode = false;
-		rocketModule->hideCursor( contextId, 0, RocketModule::HIDECURSOR_ELEMENT );
 		WriteText();
 	} else if( event == "focus" ) {
 		focusMode = true;
-		rocketModule->hideCursor( contextId, RocketModule::HIDECURSOR_ELEMENT, 0 );
 
 		// old C ui functionality
 		if( KeysAreBound() ) {
@@ -230,32 +228,27 @@ void UI_KeySelect::ProcessEvent( Event& event ) {
 			this->SetKeybind( key );
 			event.StopPropagation();
 			return;
-		} else if( event == "textinput" ) {
-			// not supported yet
-		} else if( event == "mousedown" ) {
-			// fix mouse position inside the widget
-			mouse_x = event.GetParameter<int>( "mouse_x", 0 );
-			mouse_y = event.GetParameter<int>( "mouse_y", 0 );
-			return;
-		} else if( event == "mousemove" || event == "mouseout" ) {
-			rocketModule->mouseMove( contextId, mouse_x, mouse_y );
-			event.StopPropagation();
-			return;
 		}
 	}
 
-	Element::ProcessEvent( event );
+	Element::ProcessDefaultAction( event );
 }
 
 /// Instances an element given the tag name and attributes.
 /// @param[in] parent The element the new element is destined to be parented to.
 /// @param[in] tag The tag of the element to instance.
 /// @param[in] attributes Dictionary of attributes.
-Element* UI_KeySelectInstancer::InstanceElement( Element *parent, const String &tag, const XMLAttributes &attr ) {
-	UI_KeySelect *keyselect = __new__( UI_KeySelect )( tag, attr.Get<String>( "bind", "" ), this );
+ElementPtr UI_KeySelectInstancer::InstanceElement( Element *parent, const String &tag, const XMLAttributes &attr ) {
+	std::string bind;
+	auto it = attr.find("bind");
+	if (it != attr.end()) {
+		bind = it->second.Get<std::string>();
+	}
+
+	UI_KeySelect *keyselect = __new__( UI_KeySelect )( tag, bind, this );
 	keyselect_widgets.push_back( keyselect );
 	UI_Main::Get()->getRocket()->registerElementDefaults( keyselect );
-	return keyselect;
+	return ElementPtr(keyselect);
 }
 
 /// Releases an element instanced by this instancer.
@@ -268,9 +261,6 @@ void UI_KeySelectInstancer::ReleaseElement( Element *element ) {
 	// then delete
 	__delete__( element );
 }
-
-/// Release the instancer.
-void UI_KeySelectInstancer::Release() { __delete__( this ); }
 
 // Returns a keyselect which has the same bound key of the excluded one
 UI_KeySelect* UI_KeySelectInstancer::getKeySelectByKey( int key, const UI_KeySelect *exclude ) {
@@ -303,8 +293,6 @@ UI_KeySelect* UI_KeySelectInstancer::getKeySelectByCmd( const String &cmd, const
 
 ElementInstancer *GetKeySelectInstancer( void ) {
 	ElementInstancer *instancer = __new__( UI_KeySelectInstancer )();
-
-	// instancer->RemoveReference();
 	return instancer;
 }
 }

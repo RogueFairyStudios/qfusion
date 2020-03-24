@@ -30,8 +30,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <conio.h>
 #include <limits.h>
 
-#include "../win32/conproc.h"
-
 #if !defined( DEDICATED_ONLY )
 QF_DLL_EXPORT DWORD NvOptimusEnablement = 0x00000001;
 QF_DLL_EXPORT int AmdPowerXpressRequestHighPerformance = 1;
@@ -50,7 +48,6 @@ int64_t sys_msg_time;
 int argc;
 char *argv[MAX_NUM_ARGVS];
 
-void Sys_InitTimeDynvar( void );
 void Sys_InitTime( void );
 
 void Sys_InitThreads( void );
@@ -73,9 +70,6 @@ void Sys_Error( const char *format, ... ) {
 
 	MessageBox( NULL, msg, "Error", 0 /* MB_OK */ );
 
-	// shut down QHOST hooks if necessary
-	DeinitConProc();
-
 	exit( 1 );
 }
 
@@ -88,9 +82,6 @@ void Sys_Quit( void ) {
 	if( dedicated && dedicated->integer ) {
 		FreeConsole();
 	}
-
-	// shut down QHOST hooks if necessary
-	DeinitConProc();
 
 	Qcommon_Shutdown();
 
@@ -121,17 +112,7 @@ void Sys_Init( void ) {
 		if( !AllocConsole() ) {
 			Sys_Error( "Couldn't create dedicated server console" );
 		}
-
-		// let QHOST hook in
-		InitConProc( argc, argv );
 	}
-}
-
-/*
-* Sys_InitDynvars
-*/
-void Sys_InitDynvars( void ) {
-	Sys_InitTimeDynvar();
 }
 
 /*

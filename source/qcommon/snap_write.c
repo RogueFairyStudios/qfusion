@@ -94,7 +94,7 @@ static void SNAP_EmitPacketEntities( ginfo_t *gi, client_snapshot_t *from, clien
 		}
 	}
 
-	MSG_WriteInt16( msg, 0 ); // end of packetentities
+	MSG_WriteEntityNumber( msg, 0, false, 0 ); // end of packetentities
 }
 
 /*
@@ -495,7 +495,7 @@ static float SNAP_GainForAttenuation( float dist, float attenuation ) {
 	float maxdistance = S_DEFAULT_ATTENUATION_MAXDISTANCE;
 	float refdistance = S_DEFAULT_ATTENUATION_REFDISTANCE;
 
-#if !defined( PUBLIC_BUILD ) && !defined( DEDICATED_ONLY ) && !defined( TV_SERVER_ONLY )
+#if !defined( PUBLIC_BUILD ) && !defined( DEDICATED_ONLY )
 #define DUMMY_CVAR ( cvar_t * )( (void *)1 )
 	static cvar_t *s_attenuation_model = DUMMY_CVAR;
 	static cvar_t *s_attenuation_maxdistance = DUMMY_CVAR;

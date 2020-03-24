@@ -502,7 +502,7 @@ void Key_CharEvent( int key, wchar_t charkey ) {
 			Con_MessageCharEvent( charkey );
 			break;
 		case key_menu:
-			CL_UIModule_CharEvent( charkey );
+			CL_UIModule_CharEvent( true, charkey );
 			break;
 		case key_game:
 		case key_console:
@@ -558,51 +558,14 @@ void Key_MouseEvent( int key, bool down, int64_t time ) {
 }
 
 /*
-* Key_NumPadKeyValue
-*
-* Translates numpad keys into 0-9, if possible.
-*/
-static int Key_NumPadKeyValue( int key ) {
-	switch( key ) {
-		case KP_HOME:
-			return '7';
-		case KP_UPARROW:
-			return '8';
-		case KP_PGUP:
-			return '9';
-		case KP_LEFTARROW:
-			return '4';
-		case KP_5:
-			return '5';
-		case KP_RIGHTARROW:
-			return '6';
-		case KP_END:
-			return '1';
-		case KP_DOWNARROW:
-			return '2';
-		case KP_PGDN:
-			return '3';
-		case KP_INS:
-			return '0';
-		default:
-			break;
-	}
-	return key;
-}
-
-/*
 * Key_Event
 *
 * Called by the system between frames for both key up and key down events
 * Should NOT be called during an interrupt!
 */
 void Key_Event( int key, bool down, int64_t time ) {
-	char *kb;
 	char cmd[1024];
 	bool handled = false;
-	int numkey = Key_NumPadKeyValue( key );
-	bool have_quickmenu = SCR_IsQuickMenuShown();
-	bool numeric = numkey >= '0' && numkey <= '9';
 
 	// update auto-repeat status
 	if( down ) {
@@ -620,7 +583,7 @@ void Key_Event( int key, bool down, int64_t time ) {
 		key_repeats[key] = 0;
 	}
 
-#if !defined( WIN32 ) && !defined( __ANDROID__ )
+#if defined( USE_SDL2 ) && !defined( __ANDROID__ )
 	// switch between fullscreen/windowed when ALT+ENTER is pressed
 	if( key == K_ENTER && down && ( keydown[K_LALT] || keydown[K_RALT] ) ) {
 		Cbuf_ExecuteText( EXEC_APPEND, "toggle vid_fullscreen\n" );
@@ -655,7 +618,7 @@ void Key_Event( int key, bool down, int64_t time ) {
 				if( cls.state != CA_DISCONNECTED ) {
 					Cbuf_AddText( "disconnect\n" );
 				} else if( cls.key_dest == key_menu ) {
-					CL_UIModule_Keydown( key );
+					CL_UIModule_KeyEvent( true, key, down );
 				}
 				return;
 			}
@@ -666,7 +629,7 @@ void Key_Event( int key, bool down, int64_t time ) {
 				Con_MessageKeyDown( key );
 				break;
 			case key_menu:
-				CL_UIModule_Keydown( key );
+				CL_UIModule_KeyEvent( true, key, down );
 				break;
 			case key_game:
 				CL_GameModule_EscapeKey();
@@ -688,11 +651,18 @@ void Key_Event( int key, bool down, int64_t time ) {
 	//
 	if( ( cls.key_dest == key_menu && menubound[key] )
 		|| ( cls.key_dest == key_console && !consolekeys[key] )
-		|| ( cls.key_dest == key_game && ( cls.state == CA_ACTIVE || !consolekeys[key] ) && ( !have_quickmenu || !numeric ) )
+		|| ( cls.key_dest == key_game && ( cls.state == CA_ACTIVE || !consolekeys[key] ) )
 		|| ( cls.key_dest == key_message && ( key >= K_F1 && key <= K_F15 ) ) ) {
-		kb = keybindings[key];
+		const char *kb = keybindings[key];
+		bool suppress = false;
 
-		if( kb ) {
+		if( cls.key_dest == key_game ) {
+			// if the cursor is hovering above in-game UI elements, 
+			// do not pass call the cgame callaback at all
+			suppress = CL_GameModule_KeyEvent( key, down );
+		}
+
+		if( kb && !suppress ) {
 			if( in_debug && in_debug->integer ) {
 				Com_Printf( "key:%i down:%i time:%" PRIi64 " %s\n", key, down, time, kb );
 			}
@@ -727,31 +697,19 @@ void Key_Event( int key, bool down, int64_t time ) {
 	}
 
 	if( cls.key_dest == key_menu ) {
-		if( down ) {
-			CL_UIModule_Keydown( key );
-		} else {
-			CL_UIModule_Keyup( key );
-		}
+		CL_UIModule_KeyEvent( cls.key_dest == key_menu, key, down );
 		return;
 	}
 
 	if( handled || !down ) {
 		return; // other systems only care about key down events
-
 	}
+
 	switch( cls.key_dest ) {
 		case key_message:
 			Con_MessageKeyDown( key );
 			break;
 		case key_game:
-			if( have_quickmenu && numeric ) {
-				if( down ) {
-					CL_UIModule_KeydownQuick( numkey );
-				} else {
-					CL_UIModule_KeyupQuick( numkey );
-				}
-				break;
-			}
 		case key_console:
 			Con_KeyDown( key );
 			break;

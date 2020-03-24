@@ -39,12 +39,6 @@ void Sys_Init( void ) {
 }
 
 /*
-* Sys_InitDynvars
-*/
-void Sys_InitDynvars( void ) {
-}
-
-/*
 * Sys_Quit
 */
 void Sys_Quit( void ) {
@@ -76,8 +70,6 @@ void Sys_AppActivate( void ) {
 * Sys_SendKeyEvents
 */
 void Sys_SendKeyEvents( void ) {
-	// grab frame time
-	sys_frame_time = Sys_Milliseconds();
 }
 
 /*****************************************************************************/

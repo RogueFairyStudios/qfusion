@@ -893,25 +893,25 @@ void G_InitMover( edict_t *ent ) {
 		}
 
 		i /= 4;
-		i = min( i, 255 );
+		i = fmin( i, 255 );
 
 		r = ent->color[0];
 		if( r <= 1.0 ) {
 			r *= 255;
 		}
-		clamp( r, 0, 255 );
+		Q_clamp( r, 0, 255 );
 
 		g = ent->color[1];
 		if( g <= 1.0 ) {
 			g *= 255;
 		}
-		clamp( g, 0, 255 );
+		Q_clamp( g, 0, 255 );
 
 		b = ent->color[2];
 		if( b <= 1.0 ) {
 			b *= 255;
 		}
-		clamp( b, 0, 255 );
+		Q_clamp( b, 0, 255 );
 
 		ent->s.light = COLOR_RGBA( r, g, b, i );
 	}
@@ -1807,6 +1807,44 @@ realcheck:
 }
 
 /*
+* G_Visible
+*
+* Returns true if the entity is visible to self, even if not infront ()
+*/
+bool G_Visible( edict_t *self, edict_t *other ) {
+	vec3_t	spot1;
+	vec3_t	spot2;
+	trace_t	trace;
+
+	VectorCopy( self->s.origin, spot1 );
+	spot1[2] += self->viewheight;
+
+	VectorCopy( other->s.origin, spot2 );
+	spot2[2] += other->viewheight;
+
+	G_Trace( &trace, spot1, vec3_origin, vec3_origin, spot2, self, MASK_OPAQUE );	
+	return( trace.fraction == 1.0 );
+}
+
+/*
+* G_InFront
+*
+* Returns true if the entity is in front (in sight) of self
+*/
+bool G_InFront( edict_t *self, edict_t *other ) {
+	vec3_t	vec;
+	float	dot;
+	vec3_t	forward;
+	
+	AngleVectors( self->s.angles, forward, NULL, NULL );
+	VectorSubtract( other->s.origin, self->s.origin, vec );
+	VectorNormalize( vec );
+	dot = DotProduct( vec, forward );
+	
+	return( dot > 0.3 );
+}
+
+/*
 * G_SetBoundsForSpanEntity
 *
 * Set origin and origin2 and then call this before linkEntity
@@ -2270,3 +2308,69 @@ void G_MapLocationNameForTAG( int tag, char *buf, size_t buflen ) {
 	}
 	Q_strncpyz( buf, trap_GetConfigString( CS_LOCATIONS + tag ), buflen );
 }
+
+/*
+* G_PlayerNoise
+*
+* Each player can have two noise objects associated with it:
+* a personal noise (jumping, pain, weapon firing), and a weapon
+* target noise (bullet wall impacts)
+* Monsters that don't directly see the player can move
+* to a noise in hopes of seeing the player from there.
+*/
+void G_PlayerNoise( edict_t *who, vec3_t where, int type )
+{
+	edict_t		*noise;
+	
+	if (!who->r.client) {
+		return;
+	}
+	if (who->r.svflags & SVF_NOCLIENT) {
+		return;
+	}
+
+	//if (deathmatch->value)
+	//	return;
+	
+	if (who->flags & FL_NOTARGET)
+		return;
+	
+	if (!who->mynoise)
+	{
+		noise = G_Spawn();
+		noise->classname = "player_noise";
+		VectorSet (noise->r.mins, -8, -8, -8);
+		VectorSet (noise->r.maxs, 8, 8, 8);
+		noise->r.owner = who;
+		noise->r.svflags = SVF_NOCLIENT;
+		who->mynoise = noise;
+		
+		noise = G_Spawn();
+		noise->classname = "player_noise";
+		VectorSet (noise->r.mins, -8, -8, -8);
+		VectorSet (noise->r.maxs, 8, 8, 8);
+		noise->r.owner = who;
+		noise->r.svflags = SVF_NOCLIENT;
+		who->mynoise2 = noise;
+	}
+	
+	if (type == PNOISE_SELF || type == PNOISE_WEAPON)
+	{
+		noise = who->mynoise;
+		level.sound_entity = noise;
+		level.sound_entity_framenum = level.framenum;
+	}
+	else // type == PNOISE_IMPACT
+	{
+		noise = who->mynoise2;
+		level.sound2_entity = noise;
+		level.sound2_entity_framenum = level.framenum;
+	}
+	
+	VectorCopy (where, noise->s.origin);
+	VectorSubtract (where, noise->r.maxs, noise->r.absmin);
+	VectorAdd (where, noise->r.maxs, noise->r.absmax);
+	noise->teleport_time = level.time;
+	GClip_LinkEntity(noise);
+}
+

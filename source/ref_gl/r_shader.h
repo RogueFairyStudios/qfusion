@@ -20,7 +20,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef R_SHADER_H
 #define R_SHADER_H
 
-#define MAX_SHADERS                 2048
+#include "r_image.h"
+
+#define MAX_SHADERS                 4096
 #define MAX_SHADER_PASSES           8
 #define MAX_SHADER_DEFORMVS         8
 #define MAX_SHADER_IMAGES           16
@@ -41,6 +43,7 @@ typedef enum {
 	SHADER_TYPE_SKYBOX          = 8,
 	SHADER_TYPE_FOG             = 9,
 	SHADER_TYPE_2D_LINEAR       = 10,
+	SHADER_TYPE_DEPTHONLY       = 11,
 } shaderType_e;
 
 #define NUM_SHADER_TYPES_BSP ( SHADER_TYPE_BSP_MAX - SHADER_TYPE_BSP_MIN + 1 )
@@ -62,8 +65,7 @@ enum {
 	SHADER_ALLDETAIL                = 1 << 12,
 	SHADER_NODRAWFLAT               = 1 << 13,
 	SHADER_SOFT_PARTICLE            = 1 << 14,
-	SHADER_FORCE_OUTLINE_WORLD      = 1 << 15,
-	SHADER_STENCILTEST              = 1 << 16
+	SHADER_STENCILTEST              = 1 << 15
 };
 
 // sorting
@@ -81,6 +83,7 @@ enum {
 	SHADER_SORT_NEAREST             = 14,
 	SHADER_SORT_WEAPON              = 15, // optional phase: depth write but no color write
 	SHADER_SORT_WEAPON2             = 16,
+	SHADER_SORT_MAX                 = SHADER_SORT_WEAPON2
 };
 
 // shaderpass flags
@@ -154,7 +157,6 @@ enum {
 	TC_GEN_VECTOR,
 	TC_GEN_REFLECTION,
 	TC_GEN_FOG,
-	TC_GEN_REFLECTION_CELSHADE,
 	TC_GEN_SVECTORS,
 	TC_GEN_PROJECTION,
 	TC_GEN_SURROUND
@@ -179,8 +181,7 @@ enum {
 	DEFORMV_MOVE,
 	DEFORMV_AUTOSPRITE,
 	DEFORMV_AUTOSPRITE2,
-	DEFORMV_AUTOPARTICLE,
-	DEFORMV_OUTLINE
+	DEFORMV_AUTOPARTICLE
 };
 
 typedef struct {
@@ -204,6 +205,13 @@ typedef struct {
 	float args[4];
 	shaderfunc_t func;
 } deformv_t;
+
+typedef struct {
+	float height;
+	image_t *images[6];
+	vec3_t lightDir;
+	vec3_t lightColor;
+} shaderskyparms_t;
 
 // Per-pass rendering state information
 typedef struct {
@@ -261,8 +269,9 @@ typedef struct shader_s {
 
 	float portalDistance;
 
-	float skyHeight;
-	image_t             *skyboxImages[6];
+	shaderskyparms_t skyParms;
+
+	bool forceDefault;
 
 	struct shader_s     *prev, *next;
 } shader_t;
@@ -270,7 +279,12 @@ typedef struct shader_s {
 #define     Shader_UseTextureFog( s ) ( ( ( s )->sort <= SHADER_SORT_FOG && \
 										  ( ( s )->flags & SHADER_DEPTHWRITE ) ) || ( s )->fog_dist || ( s )->type == SHADER_TYPE_FOG )
 
-#define     Shader_ReadDepth( s ) ( ( s )->flags & SHADER_SOFT_PARTICLE )
+#define     Shader_DepthRead( s ) ( ( ( s )->flags & SHADER_SOFT_PARTICLE ) != 0 )
+#define     Shader_DepthWrite( s ) ( ( ( s )->flags & SHADER_DEPTHWRITE ) != 0 )
+
+#define     Shader_CullFront( s ) ( ( ( s )->flags & (SHADER_CULL_FRONT | SHADER_CULL_BACK) ) == SHADER_CULL_FRONT )
+#define     Shader_CullBack( s ) ( ( ( s )->flags & (SHADER_CULL_FRONT | SHADER_CULL_BACK) ) == SHADER_CULL_BACK )
+#define     Shader_CullNone( s ) ( ( ( s )->flags & (SHADER_CULL_FRONT | SHADER_CULL_BACK) ) == 0 )
 
 void        R_InitShaders( void );
 void        R_ShutdownShaders( void );
@@ -281,6 +295,9 @@ void        R_PrintShaderList( const char *mask, bool ( *filter )( const char *f
 void        R_PrintShaderCache( const char *name );
 
 shader_t    *R_ShaderById( unsigned int id );
+
+bool		R_ShaderNoDlight( const shader_t *shader );
+bool		R_ShaderNoShadow( const shader_t *shader );
 
 shader_t    *R_LoadShader( const char *name, shaderType_e type, bool forceDefault, const char *text );
 

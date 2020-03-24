@@ -38,7 +38,6 @@ cvar_t *r_lightmap;
 cvar_t *r_novis;
 cvar_t *r_nocull;
 cvar_t *r_lerpmodels;
-cvar_t *r_brightness;
 cvar_t *r_sRGB;
 
 cvar_t *r_dynamiclight;
@@ -46,7 +45,7 @@ cvar_t *r_coronascale;
 cvar_t *r_detailtextures;
 cvar_t *r_subdivisions;
 cvar_t *r_showtris;
-cvar_t *r_shownormals;
+cvar_t *r_showtris2D;
 cvar_t *r_draworder;
 cvar_t *r_leafvis;
 
@@ -67,23 +66,46 @@ cvar_t *r_lighting_vertexlight;
 cvar_t *r_lighting_maxglsldlights;
 cvar_t *r_lighting_grayscale;
 cvar_t *r_lighting_intensity;
+cvar_t *r_lighting_realtime_world;
+cvar_t *r_lighting_realtime_world_lightmaps;
+cvar_t *r_lighting_realtime_world_shadows;
+cvar_t *r_lighting_realtime_world_importfrommap;
+cvar_t *r_lighting_realtime_dlight;
+cvar_t *r_lighting_realtime_dlight_shadows;
+cvar_t *r_lighting_realtime_sky;
+cvar_t *r_lighting_realtime_sky_direction;
+cvar_t *r_lighting_realtime_sky_color;
+cvar_t *r_lighting_showlightvolumes;
+cvar_t *r_lighting_debuglight;
 
 cvar_t *r_offsetmapping;
 cvar_t *r_offsetmapping_scale;
 cvar_t *r_offsetmapping_reliefmapping;
 
 cvar_t *r_shadows;
-cvar_t *r_shadows_alpha;
-cvar_t *r_shadows_nudge;
-cvar_t *r_shadows_projection_distance;
-cvar_t *r_shadows_maxtexsize;
+cvar_t *r_shadows_minsize;
+cvar_t *r_shadows_maxsize;
+cvar_t *r_shadows_texturesize;
+cvar_t *r_shadows_bordersize;
 cvar_t *r_shadows_pcf;
 cvar_t *r_shadows_self_shadow;
 cvar_t *r_shadows_dither;
-
-cvar_t *r_outlines_world;
-cvar_t *r_outlines_scale;
-cvar_t *r_outlines_cutoff;
+cvar_t *r_shadows_precision;
+cvar_t *r_shadows_nearclip;
+cvar_t *r_shadows_bias;
+cvar_t *r_shadows_usecompiled;
+cvar_t *r_shadows_culltriangles;
+cvar_t *r_shadows_polygonoffset_factor;
+cvar_t *r_shadows_polygonoffset_units;
+cvar_t *r_shadows_sky_polygonoffset_factor;
+cvar_t *r_shadows_sky_polygonoffset_units;
+cvar_t *r_shadows_cascades_minradius;
+cvar_t *r_shadows_cascades_lambda;
+cvar_t *r_shadows_cascades_minsize;
+cvar_t *r_shadows_cascades_maxsize;
+cvar_t *r_shadows_cascades_debug;
+cvar_t *r_shadows_cascades_blendarea;
+cvar_t *r_shadows_lodbias;
 
 cvar_t *r_soft_particles;
 cvar_t *r_soft_particles_scale;
@@ -96,6 +118,7 @@ cvar_t *r_bloom;
 
 cvar_t *r_fxaa;
 cvar_t *r_samples;
+cvar_t *r_samples2D;
 
 cvar_t *r_lodbias;
 cvar_t *r_lodscale;
@@ -842,7 +865,7 @@ static void R_FinalizeGLExtensions( void ) {
 	/* GL_ARB_multitexture */
 	glConfig.maxTextureUnits = 1;
 	qglGetIntegerv( GL_MAX_TEXTURE_IMAGE_UNITS_ARB, &glConfig.maxTextureUnits );
-	clamp( glConfig.maxTextureUnits, 1, MAX_TEXTURE_UNITS );
+	Q_clamp( glConfig.maxTextureUnits, 1, MAX_TEXTURE_UNITS );
 
 	/* GL_EXT_framebuffer_object */
 	glConfig.maxRenderbufferSize = 0;
@@ -958,12 +981,12 @@ static void R_FinalizeGLExtensions( void ) {
 	}
 
 #ifdef GL_ES_VERSION_2_0
-	glConfig.maxGLSLBones = bound( 0, glConfig.maxVertexUniformComponents / 8 - 19, r_maxglslbones->integer );
+	glConfig.maxGLSLBones = Q_bound( 0, glConfig.maxVertexUniformComponents / 8 - 19, r_maxglslbones->integer );
 #else
 	// require GLSL 1.20+ for GPU skinning
 	if( glConfig.shadingLanguageVersion >= 120 ) {
 		// the maximum amount of bones we can handle in a vertex shader (2 vec4 uniforms per vertex)
-		glConfig.maxGLSLBones = bound( 0, glConfig.maxVertexUniformComponents / 8 - 19, r_maxglslbones->integer );
+		glConfig.maxGLSLBones = Q_bound( 0, glConfig.maxVertexUniformComponents / 8 - 19, r_maxglslbones->integer );
 	} else {
 		glConfig.maxGLSLBones = 0;
 	}
@@ -1067,6 +1090,7 @@ static void R_Register( const char *screenshotsPrefix ) {
 	r_speeds = ri.Cvar_Get( "r_speeds", "0", 0 );
 	r_drawelements = ri.Cvar_Get( "r_drawelements", "1", 0 );
 	r_showtris = ri.Cvar_Get( "r_showtris", "0", CVAR_CHEAT );
+	r_showtris2D = ri.Cvar_Get( "r_showtris2D", "0", CVAR_CHEAT );
 	r_leafvis = ri.Cvar_Get( "r_leafvis", "0", CVAR_CHEAT );
 	r_lockpvs = ri.Cvar_Get( "r_lockpvs", "0", CVAR_CHEAT );
 	r_nobind = ri.Cvar_Get( "r_nobind", "0", 0 );
@@ -1074,7 +1098,6 @@ static void R_Register( const char *screenshotsPrefix ) {
 	r_skymip = ri.Cvar_Get( "r_skymip", "0", CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
 	r_polyblend = ri.Cvar_Get( "r_polyblend", "1", 0 );
 
-	r_brightness = ri.Cvar_Get( "r_brightness", "0", CVAR_ARCHIVE );
 	r_sRGB = ri.Cvar_Get( "r_sRGB", "1", CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
 
 	r_detailtextures = ri.Cvar_Get( "r_detailtextures", "1", CVAR_ARCHIVE );
@@ -1082,7 +1105,6 @@ static void R_Register( const char *screenshotsPrefix ) {
 	r_dynamiclight = ri.Cvar_Get( "r_dynamiclight", "1", CVAR_ARCHIVE );
 	r_coronascale = ri.Cvar_Get( "r_coronascale", "0.4", 0 );
 	r_subdivisions = ri.Cvar_Get( "r_subdivisions", STR_TOSTR( SUBDIVISIONS_DEFAULT ), CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
-	r_shownormals = ri.Cvar_Get( "r_shownormals", "0", CVAR_CHEAT );
 	r_draworder = ri.Cvar_Get( "r_draworder", "0", CVAR_CHEAT );
 
 	r_fastsky = ri.Cvar_Get( "r_fastsky", "0", CVAR_ARCHIVE );
@@ -1100,9 +1122,20 @@ static void R_Register( const char *screenshotsPrefix ) {
 	r_lighting_packlightmaps = ri.Cvar_Get( "r_lighting_packlightmaps", "1", CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
 	r_lighting_maxlmblocksize = ri.Cvar_Get( "r_lighting_maxlmblocksize", "2048", CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
 	r_lighting_vertexlight = ri.Cvar_Get( "r_lighting_vertexlight", "0", CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
-	r_lighting_maxglsldlights = ri.Cvar_Get( "r_lighting_maxglsldlights", "16", CVAR_ARCHIVE );
+	r_lighting_maxglsldlights = ri.Cvar_Get( "r_lighting_maxglsldlights", "32", CVAR_ARCHIVE );
 	r_lighting_grayscale = ri.Cvar_Get( "r_lighting_grayscale", "0", CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
 	r_lighting_intensity = ri.Cvar_Get( "r_lighting_intensity", "1.75", CVAR_ARCHIVE );
+	r_lighting_realtime_world = ri.Cvar_Get( "r_lighting_realtime_world", "1", CVAR_ARCHIVE );
+	r_lighting_realtime_world_lightmaps = ri.Cvar_Get( "r_lighting_realtime_world_lightmaps", "0", CVAR_ARCHIVE );
+	r_lighting_realtime_world_shadows = ri.Cvar_Get( "r_lighting_realtime_world_shadows", "1", CVAR_ARCHIVE );
+	r_lighting_realtime_world_importfrommap = ri.Cvar_Get( "r_lighting_realtime_world_importfrommap", "1", CVAR_ARCHIVE );
+	r_lighting_realtime_dlight = ri.Cvar_Get( "r_lighting_realtime_dlight", "1", CVAR_ARCHIVE );
+	r_lighting_realtime_dlight_shadows = ri.Cvar_Get( "r_lighting_realtime_dlight_shadows", "1", CVAR_ARCHIVE );
+	r_lighting_realtime_sky = ri.Cvar_Get( "r_lighting_realtime_sky", "1", CVAR_ARCHIVE );
+	r_lighting_realtime_sky_direction = ri.Cvar_Get( "r_lighting_realtime_sky_direction", "", CVAR_ARCHIVE );
+	r_lighting_realtime_sky_color = ri.Cvar_Get( "r_lighting_realtime_sky_color", "", CVAR_ARCHIVE );
+	r_lighting_showlightvolumes = ri.Cvar_Get( "r_lighting_showlightvolumes", "0", 0 );
+	r_lighting_debuglight = ri.Cvar_Get( "r_lighting_debuglight", "-1", 0 );
 
 	r_offsetmapping = ri.Cvar_Get( "r_offsetmapping", "2", CVAR_ARCHIVE );
 	r_offsetmapping_scale = ri.Cvar_Get( "r_offsetmapping_scale", "0.02", CVAR_ARCHIVE );
@@ -1113,17 +1146,29 @@ static void R_Register( const char *screenshotsPrefix ) {
 #else
 	r_shadows = ri.Cvar_Get( "r_shadows", "0", CVAR_ARCHIVE );
 #endif
-	r_shadows_alpha = ri.Cvar_Get( "r_shadows_alpha", "0.7", CVAR_ARCHIVE );
-	r_shadows_nudge = ri.Cvar_Get( "r_shadows_nudge", "1", CVAR_ARCHIVE );
-	r_shadows_projection_distance = ri.Cvar_Get( "r_shadows_projection_distance", "64", CVAR_CHEAT );
-	r_shadows_maxtexsize = ri.Cvar_Get( "r_shadows_maxtexsize", "64", CVAR_ARCHIVE );
+	r_shadows_minsize = ri.Cvar_Get( "r_shadows_minsize", "32", CVAR_ARCHIVE );
+	r_shadows_maxsize = ri.Cvar_Get( "r_shadows_maxsize", "512", CVAR_ARCHIVE );
+	r_shadows_texturesize = ri.Cvar_Get( "r_shadows_texturesize", "8192", CVAR_ARCHIVE );
+	r_shadows_bordersize = ri.Cvar_Get( "r_shadows_bordersize", "6", CVAR_ARCHIVE );
 	r_shadows_pcf = ri.Cvar_Get( "r_shadows_pcf", "1", CVAR_ARCHIVE );
 	r_shadows_self_shadow = ri.Cvar_Get( "r_shadows_self_shadow", "0", CVAR_ARCHIVE );
 	r_shadows_dither = ri.Cvar_Get( "r_shadows_dither", "0", CVAR_ARCHIVE );
-
-	r_outlines_world = ri.Cvar_Get( "r_outlines_world", "1.8", CVAR_ARCHIVE );
-	r_outlines_scale = ri.Cvar_Get( "r_outlines_scale", "1", CVAR_ARCHIVE );
-	r_outlines_cutoff = ri.Cvar_Get( "r_outlines_cutoff", "712", CVAR_ARCHIVE );
+	r_shadows_precision = ri.Cvar_Get( "r_shadows_precision", "1", CVAR_ARCHIVE );
+	r_shadows_nearclip = ri.Cvar_Get( "r_shadows_nearclip", "1", CVAR_ARCHIVE );
+	r_shadows_bias = ri.Cvar_Get( "r_shadows_bias", "0.03", CVAR_ARCHIVE );
+	r_shadows_usecompiled  = ri.Cvar_Get( "r_shadows_usecompiled", "1", 0 );
+	r_shadows_culltriangles  = ri.Cvar_Get( "r_shadows_culltriangles", "1", 0 );
+	r_shadows_polygonoffset_factor = ri.Cvar_Get( "r_shadows_polygonoffset_factor", "2", CVAR_ARCHIVE );
+	r_shadows_polygonoffset_units = ri.Cvar_Get( "r_shadows_polygonoffset_units", "0", CVAR_ARCHIVE );
+	r_shadows_sky_polygonoffset_factor = ri.Cvar_Get( "r_shadows_sky_polygonoffset_factor", "8", CVAR_ARCHIVE );
+	r_shadows_sky_polygonoffset_units = ri.Cvar_Get( "r_shadows_sky_polygonoffset_units", "2", CVAR_ARCHIVE );
+	r_shadows_lodbias = ri.Cvar_Get( "r_shadows_lodbias", "100", CVAR_ARCHIVE );
+	r_shadows_cascades_minradius = ri.Cvar_Get( "r_shadows_cascades_minradius", "1536", CVAR_ARCHIVE );
+	r_shadows_cascades_lambda = ri.Cvar_Get( "r_shadows_cascades_lambda", "0.8", CVAR_ARCHIVE );
+	r_shadows_cascades_minsize = ri.Cvar_Get( "r_shadows_cascades_minsize", "512", CVAR_ARCHIVE );
+	r_shadows_cascades_maxsize = ri.Cvar_Get( "r_shadows_cascades_maxsize", "2048", CVAR_ARCHIVE );
+	r_shadows_cascades_debug = ri.Cvar_Get( "r_shadows_cascades_debug", "0", 0 );
+	r_shadows_cascades_blendarea = ri.Cvar_Get( "r_shadows_cascades_blendarea", "15", 0 );
 
 	r_soft_particles = ri.Cvar_Get( "r_soft_particles", "1", CVAR_ARCHIVE );
 	r_soft_particles_scale = ri.Cvar_Get( "r_soft_particles_scale", "0.02", CVAR_ARCHIVE );
@@ -1136,6 +1181,7 @@ static void R_Register( const char *screenshotsPrefix ) {
 
 	r_fxaa = ri.Cvar_Get( "r_fxaa", "0", CVAR_ARCHIVE );
 	r_samples = ri.Cvar_Get( "r_samples", "0", CVAR_ARCHIVE );
+	r_samples2D = ri.Cvar_Get( "r_samples2D", "0", CVAR_ARCHIVE );
 
 	r_lodbias = ri.Cvar_Get( "r_lodbias", "0", CVAR_ARCHIVE );
 	r_lodscale = ri.Cvar_Get( "r_lodscale", "5.0", CVAR_ARCHIVE );
@@ -1251,7 +1297,7 @@ static unsigned R_GLVersionHash( const char *vendorString,
 	unsigned hash;
 
 	tmp_size = strlen( vendorString ) + strlen( rendererString ) +
-			   strlen( versionString ) + strlen( ARCH ) + 1;
+			   strlen( versionString ) + strlen( CPUSTRING ) + 1;
 
 	pos = 0;
 	tmp = R_Malloc( tmp_size );
@@ -1269,11 +1315,11 @@ static unsigned R_GLVersionHash( const char *vendorString,
 	pos += csize;
 
 	// shaders are not compatible between 32-bit and 64-bit at least on Nvidia
-	csize = strlen( ARCH );
-	memcpy( tmp + pos, ARCH, csize );
+	csize = strlen( CPUSTRING );
+	memcpy( tmp + pos, CPUSTRING, csize );
 	pos += csize;
 
-	hash = COM_SuperFastHash( tmp, tmp_size, tmp_size );
+	hash = COM_SuperFastHash( tmp, tmp_size );
 
 	R_Free( tmp );
 
@@ -1401,6 +1447,7 @@ static rserr_t R_PostInit( void ) {
 	rf.swapInterval = -1;
 	rf.speedsMsgLock = ri.Mutex_Create();
 	rf.debugSurfaceLock = ri.Mutex_Create();
+	rf.traceLineLock = ri.Mutex_Create();
 
 	RJ_Init();
 
@@ -1456,10 +1503,10 @@ static rserr_t R_PostInit( void ) {
 /*
 * R_SetMode
 */
-rserr_t R_SetMode( int x, int y, int width, int height, int displayFrequency, bool fullScreen, bool stereo, bool borderless ) {
+rserr_t R_SetMode( int x, int y, int width, int height, bool fullScreen, bool stereo, bool borderless ) {
 	rserr_t err;
 
-	err = GLimp_SetMode( x, y, width, height, displayFrequency, fullScreen, stereo, borderless );
+	err = GLimp_SetMode( x, y, width, height, fullScreen, stereo, borderless );
 	if( err != rserr_ok ) {
 		Com_Printf( "Could not GLimp_SetMode()\n" );
 		return err;
@@ -1478,7 +1525,6 @@ rserr_t R_SetMode( int x, int y, int width, int height, int displayFrequency, bo
 */
 static void R_InitVolatileAssets( void ) {
 	// init volatile data
-	R_InitSkeletalCache();
 	R_InitCoronas();
 	R_InitCustomColors();
 
@@ -1486,6 +1532,7 @@ static void R_InitVolatileAssets( void ) {
 	rsh.skyShader = R_LoadShader( "$skybox", SHADER_TYPE_SKYBOX, true, NULL );
 	rsh.whiteShader = R_LoadShader( "$whiteimage", SHADER_TYPE_2D, true, NULL );
 	rsh.emptyFogShader = R_LoadShader( "$emptyfog", SHADER_TYPE_FOG, true, NULL );
+	rsh.depthOnlyShader = R_LoadShader( "$depthonly", SHADER_TYPE_DEPTHONLY, true, NULL );
 
 	if( !rsh.nullVBO ) {
 		rsh.nullVBO = R_InitNullModelVBO();
@@ -1507,7 +1554,6 @@ static void R_DestroyVolatileAssets( void ) {
 	// kill volatile data
 	R_ShutdownCustomColors();
 	R_ShutdownCoronas();
-	R_ShutdownSkeletalCache();
 }
 
 /*
@@ -1519,9 +1565,10 @@ void R_BeginRegistration( void ) {
 	R_DestroyVolatileAssets();
 
 	rsh.registrationSequence++;
+
+	// global registration sequence can not be 0
+	// as this is a special value which is reserved for free/unsed asets
 	if( !rsh.registrationSequence ) {
-		// make sure assumption that an asset is free it its registrationSequence is 0
-		// since rsh.registrationSequence never equals 0
 		rsh.registrationSequence = 1;
 	}
 	rsh.registrationOpen = true;
@@ -1531,6 +1578,8 @@ void R_BeginRegistration( void ) {
 	R_DeferDataSync();
 
 	R_DataSync();
+
+	R_ClearScene();
 }
 
 /*
@@ -1555,6 +1604,8 @@ void R_EndRegistration( void ) {
 	R_DeferDataSync();
 
 	R_DataSync();
+
+	R_ClearScene();
 }
 
 /*
@@ -1597,6 +1648,7 @@ void R_Shutdown( bool verbose ) {
 
 	ri.Mutex_Destroy( &rf.speedsMsgLock );
 	ri.Mutex_Destroy( &rf.debugSurfaceLock );
+	ri.Mutex_Destroy( &rf.traceLineLock );
 
 	RJ_Shutdown();
 
@@ -1605,6 +1657,8 @@ void R_Shutdown( bool verbose ) {
 
 	// shutdown our QGL subsystem
 	QGL_Shutdown();
+
+	R_FrameCache_Free();
 
 	R_FreePool( &r_mempool );
 }

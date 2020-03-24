@@ -23,7 +23,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "../gameshared/q_math.h"
 #include "../gameshared/q_shared.h"
 #include "../gameshared/q_cvar.h"
-#include "../gameshared/q_dynvar.h"
 #include "../gameshared/q_comref.h"
 #include "../gameshared/q_collision.h"
 
@@ -130,186 +129,177 @@ typedef struct {
 
 #include "cg_pmodels.h"
 
-typedef struct cgs_media_handle_s {
-	char *name;
-	void *data;
-	struct cgs_media_handle_s *next;
-} cgs_media_handle_t;
-
 #define STAT_MINUS              10  // num frame for '-' stats digit
 
 typedef struct {
 	// sounds
-	cgs_media_handle_t *sfxChat;
+	struct sfx_s *sfxChat;
 
 	// timers
-	cgs_media_handle_t *sfxTimerBipBip;
-	cgs_media_handle_t *sfxTimerPloink;
+	struct sfx_s *sfxTimerBipBip;
+	struct sfx_s *sfxTimerPloink;
 
-	cgs_media_handle_t *sfxRic[2];
+	struct sfx_s *sfxRic[2];
 
-	cgs_media_handle_t *sfxWeaponUp;
-	cgs_media_handle_t *sfxWeaponUpNoAmmo;
+	struct sfx_s *sfxWeaponUp;
+	struct sfx_s *sfxWeaponUpNoAmmo;
 
-	cgs_media_handle_t *sfxWalljumpFailed;
+	struct sfx_s *sfxWalljumpFailed;
 
 	//--------------------------------------
 
-	cgs_media_handle_t *sfxWeaponHit[4];
-	cgs_media_handle_t *sfxWeaponKill;
-	cgs_media_handle_t *sfxWeaponHitTeam;
+	struct sfx_s *sfxWeaponHit[4];
+	struct sfx_s *sfxWeaponKill;
+	struct sfx_s *sfxWeaponHitTeam;
 
-	cgs_media_handle_t *sfxItemRespawn;
-	cgs_media_handle_t *sfxPlayerRespawn;
-	cgs_media_handle_t *sfxTeleportIn;
-	cgs_media_handle_t *sfxTeleportOut;
-	cgs_media_handle_t *sfxShellHit;
+	struct sfx_s *sfxItemRespawn;
+	struct sfx_s *sfxPlayerRespawn;
+	struct sfx_s *sfxTeleportIn;
+	struct sfx_s *sfxTeleportOut;
+	struct sfx_s *sfxShellHit;
 
 	// Gunblade sounds :
-	cgs_media_handle_t *sfxGunbladeWeakShot[3];
-	cgs_media_handle_t *sfxGunbladeStrongShot;
-	cgs_media_handle_t *sfxBladeFleshHit[3];
-	cgs_media_handle_t *sfxBladeWallHit[2];
-	cgs_media_handle_t *sfxGunbladeStrongHit[3];
+	struct sfx_s *sfxGunbladeWeakShot[3];
+	struct sfx_s *sfxGunbladeStrongShot;
+	struct sfx_s *sfxBladeFleshHit[3];
+	struct sfx_s *sfxBladeWallHit[2];
+	struct sfx_s *sfxGunbladeStrongHit[3];
 
 	// Riotgun sounds :
-	cgs_media_handle_t *sfxRiotgunWeakHit;
-	cgs_media_handle_t *sfxRiotgunStrongHit;
+	struct sfx_s *sfxRiotgunWeakHit;
+	struct sfx_s *sfxRiotgunStrongHit;
 
 	// Grenade launcher sounds :
-	cgs_media_handle_t *sfxGrenadeWeakBounce[2];
-	cgs_media_handle_t *sfxGrenadeStrongBounce[2];
-	cgs_media_handle_t *sfxGrenadeWeakExplosion;
-	cgs_media_handle_t *sfxGrenadeStrongExplosion;
+	struct sfx_s *sfxGrenadeWeakBounce[2];
+	struct sfx_s *sfxGrenadeStrongBounce[2];
+	struct sfx_s *sfxGrenadeWeakExplosion;
+	struct sfx_s *sfxGrenadeStrongExplosion;
 
 	// Rocket launcher sounds :
-	cgs_media_handle_t *sfxRocketLauncherWeakHit;
-	cgs_media_handle_t *sfxRocketLauncherStrongHit;
+	struct sfx_s *sfxRocketLauncherWeakHit;
+	struct sfx_s *sfxRocketLauncherStrongHit;
 
 	// Plasmagun sounds
-	cgs_media_handle_t *sfxPlasmaWeakHit;
-	cgs_media_handle_t *sfxPlasmaStrongHit;
+	struct sfx_s *sfxPlasmaWeakHit;
+	struct sfx_s *sfxPlasmaStrongHit;
 
 	// Lasergun sounds
-	cgs_media_handle_t *sfxLasergunWeakHum;
-	cgs_media_handle_t *sfxLasergunWeakQuadHum;
-	cgs_media_handle_t *sfxLasergunWeakStop;
-	cgs_media_handle_t *sfxLasergunStrongHum;
-	cgs_media_handle_t *sfxLasergunStrongQuadHum;
-	cgs_media_handle_t *sfxLasergunStrongStop;
-	cgs_media_handle_t *sfxLasergunHit[3];
+	struct sfx_s *sfxLasergunWeakHum;
+	struct sfx_s *sfxLasergunWeakQuadHum;
+	struct sfx_s *sfxLasergunWeakStop;
+	struct sfx_s *sfxLasergunStrongHum;
+	struct sfx_s *sfxLasergunStrongQuadHum;
+	struct sfx_s *sfxLasergunStrongStop;
+	struct sfx_s *sfxLasergunHit[3];
 
-	cgs_media_handle_t *sfxElectroboltHit;
+	struct sfx_s *sfxElectroboltHit;
 
-	cgs_media_handle_t *sfxQuadFireSound;
+	struct sfx_s *sfxQuadFireSound;
 
 	// VSAY sounds
-	cgs_media_handle_t *sfxVSaySounds[VSAY_TOTAL];
+	struct sfx_s *sfxVSaySounds[VSAY_TOTAL];
 
 	//no wsw
 
 	// models
 	//	cgs_media_handle_t		*modTeleportEffect;
-	cgs_media_handle_t *modDash;
-	cgs_media_handle_t *modHeadStun;
+	struct model_s *modDash;
+	struct model_s *modHeadStun;
 
-	cgs_media_handle_t *modIlluminatiGibs;
+	struct model_s *modIlluminatiGibs;
 
 	//wsw weapon sfx
-	cgs_media_handle_t *modRocketExplosion;
-	cgs_media_handle_t *modPlasmaExplosion;
+	struct model_s *modRocketExplosion;
+	struct model_s *modPlasmaExplosion;
 
-	cgs_media_handle_t *modBulletExplode;
-	cgs_media_handle_t *modBladeWallHit;
-	cgs_media_handle_t *modBladeWallExplo;
+	struct model_s *modBulletExplode;
+	struct model_s *modBladeWallHit;
+	struct model_s *modBladeWallExplo;
 
-	cgs_media_handle_t *modElectroBoltWallHit;
-	cgs_media_handle_t *modInstagunWallHit;
+	struct model_s *modElectroBoltWallHit;
+	struct model_s *modInstagunWallHit;
 
-	cgs_media_handle_t *modLasergunWallExplo;
+	struct model_s *modLasergunWallExplo;
 
 	//no wsw
 
-	cgs_media_handle_t *shaderParticle;
-	cgs_media_handle_t *shaderGrenadeExplosion;
-	cgs_media_handle_t *shaderRocketExplosion;
-	cgs_media_handle_t *shaderRocketExplosionRing;
-	cgs_media_handle_t *shaderBulletExplosion;
-	cgs_media_handle_t *shaderRaceGhostEffect;
-	cgs_media_handle_t *shaderWaterBubble;
+	struct shader_s *shaderParticle;
+	struct shader_s *shaderGrenadeExplosion;
+	struct shader_s *shaderRocketExplosion;
+	struct shader_s *shaderRocketExplosionRing;
+	struct shader_s *shaderBulletExplosion;
+	struct shader_s *shaderRaceGhostEffect;
+	struct shader_s *shaderWaterBubble;
 	//	cgs_media_handle_t		*shaderTeleportEffect;
-	cgs_media_handle_t *shaderSmokePuff;
+	struct shader_s *shaderSmokePuff;
 
-	cgs_media_handle_t *shaderSmokePuff1;
-	cgs_media_handle_t *shaderSmokePuff2;
-	cgs_media_handle_t *shaderSmokePuff3;
+	struct shader_s *shaderSmokePuff1;
+	struct shader_s *shaderSmokePuff2;
+	struct shader_s *shaderSmokePuff3;
 
-	cgs_media_handle_t *shaderStrongRocketFireTrailPuff;
-	cgs_media_handle_t *shaderWeakRocketFireTrailPuff;
-	cgs_media_handle_t *shaderGrenadeTrailSmokePuff;
-	cgs_media_handle_t *shaderRocketTrailSmokePuff;
-	cgs_media_handle_t *shaderBloodTrailPuff;
-	cgs_media_handle_t *shaderBloodTrailLiquidPuff;
-	cgs_media_handle_t *shaderBloodImpactPuff;
-	cgs_media_handle_t *shaderCartoonHit;
-	cgs_media_handle_t *shaderCartoonHit2;
-	cgs_media_handle_t *shaderCartoonHit3;
-	cgs_media_handle_t *shaderTeamMateIndicator;
-	cgs_media_handle_t *shaderTeamCarrierIndicator;
-	cgs_media_handle_t *shaderTeleporterSmokePuff;
-	cgs_media_handle_t *shaderBladeMark;
-	cgs_media_handle_t *shaderBulletMark;
-	cgs_media_handle_t *shaderExplosionMark;
-	cgs_media_handle_t *shaderEnergyMark;
-	cgs_media_handle_t *shaderLaser;
-	cgs_media_handle_t *shaderNet;
-	cgs_media_handle_t *shaderBackTile;
-	cgs_media_handle_t *shaderSelect;
-	cgs_media_handle_t *shaderChatBalloon;
-	cgs_media_handle_t *shaderDownArrow;
-	cgs_media_handle_t *shaderTeleportShellGfx;
+	struct shader_s *shaderStrongRocketFireTrailPuff;
+	struct shader_s *shaderWeakRocketFireTrailPuff;
+	struct shader_s *shaderGrenadeTrailSmokePuff;
+	struct shader_s *shaderRocketTrailSmokePuff;
+	struct shader_s *shaderBloodTrailPuff;
+	struct shader_s *shaderBloodTrailLiquidPuff;
+	struct shader_s *shaderBloodImpactPuff;
+	struct shader_s *shaderTeamMateIndicator;
+	struct shader_s *shaderTeamCarrierIndicator;
+	struct shader_s *shaderTeleporterSmokePuff;
+	struct shader_s *shaderBladeMark;
+	struct shader_s *shaderBulletMark;
+	struct shader_s *shaderExplosionMark;
+	struct shader_s *shaderEnergyMark;
+	struct shader_s *shaderLaser;
+	struct shader_s *shaderNet;
+	struct shader_s *shaderBackTile;
+	struct shader_s *shaderSelect;
+	struct shader_s *shaderChatBalloon;
+	struct shader_s *shaderDownArrow;
+	struct shader_s *shaderTeleportShellGfx;
 
 	//wsw
 	//----------------------------------------------
 
-	cgs_media_handle_t *shaderAdditiveParticleShine;
+	struct shader_s *shaderAdditiveParticleShine;
 
 	//wsw weapon sfx
-	cgs_media_handle_t *shaderPlasmaMark;
-	cgs_media_handle_t *shaderElectroBeamOld;
-	cgs_media_handle_t *shaderElectroBeamOldAlpha;
-	cgs_media_handle_t *shaderElectroBeamOldBeta;
-	cgs_media_handle_t *shaderElectroBeamA;
-	cgs_media_handle_t *shaderElectroBeamAAlpha;
-	cgs_media_handle_t *shaderElectroBeamABeta;
-	cgs_media_handle_t *shaderElectroBeamB;
-	cgs_media_handle_t *shaderElectroBeamBAlpha;
-	cgs_media_handle_t *shaderElectroBeamBBeta;
-	cgs_media_handle_t *shaderElectroBeamRing;
-	cgs_media_handle_t *shaderInstaBeam;
-	cgs_media_handle_t *shaderLaserGunBeam;
-	cgs_media_handle_t *shaderElectroboltMark;
-	cgs_media_handle_t *shaderInstagunMark;
+	struct shader_s *shaderPlasmaMark;
+	struct shader_s *shaderElectroBeamOld;
+	struct shader_s *shaderElectroBeamOldAlpha;
+	struct shader_s *shaderElectroBeamOldBeta;
+	struct shader_s *shaderElectroBeamA;
+	struct shader_s *shaderElectroBeamAAlpha;
+	struct shader_s *shaderElectroBeamABeta;
+	struct shader_s *shaderElectroBeamB;
+	struct shader_s *shaderElectroBeamBAlpha;
+	struct shader_s *shaderElectroBeamBBeta;
+	struct shader_s *shaderElectroBeamRing;
+	struct shader_s *shaderInstaBeam;
+	struct shader_s *shaderLaserGunBeam;
+	struct shader_s *shaderElectroboltMark;
+	struct shader_s *shaderInstagunMark;
 
 	//wsw
-	cgs_media_handle_t *shaderPlayerShadow;
-	cgs_media_handle_t *shaderFlagFlare;
+	struct shader_s *shaderPlayerShadow;
+	struct shader_s *shaderFlagFlare;
 
 	// hud icons
-	cgs_media_handle_t *shaderWeaponIcon[WEAP_TOTAL];
-	cgs_media_handle_t *shaderNoGunWeaponIcon[WEAP_TOTAL];
-	cgs_media_handle_t *shaderGunbladeBlastIcon;
-	cgs_media_handle_t *shaderInstagunChargeIcon[3];
+	struct shader_s *shaderWeaponIcon[WEAP_TOTAL];
+	struct shader_s *shaderNoGunWeaponIcon[WEAP_TOTAL];
+	struct shader_s *shaderGunbladeBlastIcon;
+	struct shader_s *shaderInstagunChargeIcon[3];
 
-	cgs_media_handle_t *shaderKeyIcon[KEYICON_TOTAL];
+	struct shader_s *shaderKeyIcon[KEYICON_TOTAL];
 
 	//no wsw
 
-	cgs_media_handle_t *shaderSbNums;
+	struct shader_s *shaderSbNums;
 
 	// VSAY icons
-	cgs_media_handle_t *shaderVSayIcon[VSAY_TOTAL];
-} cgs_media_t;
+	struct shader_s *shaderVSayIcon[VSAY_TOTAL];
+} cgs_precache_t;
 
 typedef struct bonenode_s {
 	int bonenum;
@@ -388,8 +378,9 @@ typedef struct {
 
 // view types
 enum {
-	VIEWDEF_CAMERA,
+	VIEWDEF_DEMOCAM,
 	VIEWDEF_PLAYERVIEW,
+	VIEWDEF_OVERHEAD,
 
 	VIEWDEF_MAXTYPES
 };
@@ -401,13 +392,15 @@ typedef struct {
 	bool playerPrediction;
 	bool drawWeapon;
 	bool draw2D;
-	refdef_t refdef;
+	float fov_x, fov_y;
 	float fracDistFOV;
 	vec3_t origin;
 	vec3_t angles;
 	mat3_t axis;
 	vec3_t velocity;
 	bool flipped;
+	float stereoSeparation;
+	refdef_t refdef;
 } cg_viewdef_t;
 
 #include "cg_democams.h"
@@ -422,6 +415,46 @@ typedef struct {
 	struct shader_s *shaderWhite;
 	struct shader_s *shaderMiniMap;
 
+	// AngelScript
+	struct angelwrap_api_s *asExport;
+
+	void *asEngine;
+	// AS input subsystem API
+	struct {
+		void *load;
+	} asMain;
+
+	// AS input subsystem API
+	struct {
+		void *init;
+		void *shutdown;
+		void *frame;
+		void *clearState;
+		void *keyEvent;
+		void *mouseMove;
+		void *getButtonBits;
+		void *getAngularMovement;
+		void *getMovement;
+	} asInput;
+
+	// AS camera subsystem API
+	struct {
+		void *setupCamera;
+		void *setupRefdef;
+	} asCamera;
+
+	// AS player movement API
+	struct {
+		void *pmove;
+		void *vaClamp;
+	} asPMove;
+
+	// AS head-up display API
+	struct {
+		void *init;
+		void *drawCrosshair;
+	} asHUD;
+
 	// fonts
 	char fontSystemFamily[MAX_QPATH];
 	char fontSystemMonoFamily[MAX_QPATH];
@@ -433,7 +466,7 @@ typedef struct {
 	struct qfontface_s *fontSystemMedium;
 	struct qfontface_s *fontSystemBig;
 
-	cgs_media_t media;
+	cgs_precache_t media;
 
 	bool precacheDone;
 
@@ -443,7 +476,6 @@ typedef struct {
 	bool demoPlaying;
 	bool demoTutorial;
 	bool pure;
-	bool tv, tvRequested;
 	bool gameMenuRequested;
 	int gameProtocol;
 	char demoExtension[MAX_QPATH];
@@ -591,6 +623,8 @@ typedef struct {
 	int64_t fallEffectTime;
 	int64_t fallEffectRebounceTime;
 
+	int64_t screenDamageTimeOff;
+
 	//
 	// transient data from server
 	//
@@ -601,8 +635,7 @@ typedef struct {
 	size_t teaminfo_size;
 	char *motd;
 	int64_t motd_time;
-	char quickmenu[MAX_STRING_CHARS];
-	bool quickmenu_left;
+	char overlayMenu[MAX_STRING_CHARS];
 
 	// awards
 	char award_lines[MAX_AWARD_LINES][MAX_CONFIGSTRING_CHARS];
@@ -646,7 +679,6 @@ void CG_LerpGenericEnt( centity_t *cent );
 void CG_SetOutlineColor( byte_vec4_t outlineColor, byte_vec4_t color );
 void CG_AddColoredOutLineEffect( entity_t *ent, int effects, uint8_t r, uint8_t g, uint8_t b, uint8_t a );
 void CG_AddCentityOutLineEffect( centity_t *cent );
-void CG_AddItemGhostEffect( centity_t *cent );
 
 void CG_AddFlagModelOnTag( centity_t *cent, byte_vec4_t teamcolor, const char *tagname );
 
@@ -656,30 +688,46 @@ centity_t *CG_GetItemTimerEnt( int num );
 //
 // cg_draw.c
 //
+#define DEFAULT_MINIMAP_VIEW_DISTANCE 4096
+
 int CG_HorizontalAlignForWidth( const int x, int align, int width );
 int CG_VerticalAlignForHeight( const int y, int align, int height );
 int CG_HorizontalMovementForAlign( int align );
 
 void CG_DrawHUDField( int x, int y, int align, float *color, int size, int width, int value );
 void CG_DrawHUDModel( int x, int y, int align, int w, int h, struct model_s *model, struct shader_s *shader, float yawspeed );
-void CG_DrawMiniMap( int x, int y, int iw, int ih, bool draw_playernames, bool draw_itemnames, int align, vec4_t color );
+void CG_DrawMiniMap( int x, int y, int iw, int ih, float viewDist, int align, vec4_t color );
 void CG_DrawHUDRect( int x, int y, int align, int w, int h, int val, int maxval, vec4_t color, struct shader_s *shader );
 void CG_DrawPicBar( int x, int y, int width, int height, int align, float percent, struct shader_s *shader, vec4_t backColor, vec4_t color );
 
 //
 // cg_media.c
 //
-void CG_RegisterMediaSounds( void );
-void CG_RegisterMediaModels( void );
-void CG_RegisterMediaShaders( void );
-void CG_RegisterLevelMinimap( void );
-void CG_RegisterFonts( void );
+void CG_PrecacheSounds( void );
+void CG_PrecacheModels( void );
+void CG_PrecacheShaders( void );
+void CG_PrecacheMinimap( void );
+void CG_PrecacheFonts( void );
 
 struct model_s *CG_RegisterModel( const char *name );
+struct sfx_s *CG_RegisterSfx( const char *name );
+struct shader_s *CG_RegisterShader( const char *name );
 
-struct sfx_s *CG_MediaSfx( cgs_media_handle_t *mediasfx );
-struct model_s *CG_MediaModel( cgs_media_handle_t *mediamodel );
-struct shader_s *CG_MediaShader( cgs_media_handle_t *mediashader );
+//
+// cg_overlay.c
+//
+typedef struct {
+	bool showCursor;
+	int cursor_x, cursor_y;
+} cg_overlay_t;
+
+extern cg_overlay_t cg_overlay;
+
+void CG_Overlay_Init( cg_overlay_t *overlay );
+void CG_Overlay_MouseMove( cg_overlay_t *overlay, int mx, int my );
+bool CG_Overlay_Hover( cg_overlay_t *overlay );
+void CG_Overlay_KeyEvent( cg_overlay_t *overlay, int key, bool down );
+void CG_Overlay_Show( cg_overlay_t *overlay, bool show, bool showCursor );
 
 //
 // cg_players.c
@@ -698,7 +746,6 @@ struct sfx_s *CG_RegisterSexedSound( int entnum, const char *name );
 // cg_predict.c
 //
 extern cvar_t *cg_predict;
-extern cvar_t *cg_predict_optimize;
 extern cvar_t *cg_showMiss;
 
 void CG_PredictedEvent( int entNum, int ev, int parm );
@@ -708,11 +755,17 @@ void CG_CheckPredictionError( void );
 void CG_BuildSolidList( void );
 void CG_Trace( trace_t *t, vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int ignore, int contentmask );
 int CG_PointContents( const vec3_t point );
-void CG_Predict_TouchTriggers( pmove_t *pm, vec3_t previous_origin );
+void CG_Predict_TouchTriggers( pmove_t *pm, player_state_t *ps, vec3_t previous_origin );
 
 //
 // cg_screen.c
 //
+typedef enum {
+	OVERLAY_MENU_LEFT = -1,
+	OVERLAY_MENU_HIDDEN = 0,
+	OVERLAY_MENU_RIGHT = 1,
+} e_ingamestate_t;
+
 extern vrect_t scr_vrect;
 
 extern cvar_t *cg_scoreboardFontFamily;
@@ -764,52 +817,14 @@ void CG_ClearPointedNum( void );
 /**
  * Sends current quick menu string to the UI.
  */
-void CG_RefreshQuickMenu( void );
+void CG_RefreshOverlayMenu( void );
 
 /**
  * Toggles the visibility of the quick menu.
  *
  * @param state quick menu visibility (0 = hidden, 1 = on the right, -1 = on the left)
  */
-void CG_ShowQuickMenu( int state );
-
-/**
- * Touch area ID namespaces.
- */
-enum {
-	TOUCHAREA_NONE,
-	TOUCHAREA_HUD
-	// next would be 0x101, 0x201... until 0xf01
-};
-
-#define TOUCHAREA_SUB_SHIFT 16
-#define TOUCHAREA_MASK ( ( 1 << TOUCHAREA_SUB_SHIFT ) - 1 )
-
-typedef struct {
-	bool down; // is the finger currently down?
-	int x, y; // current x and y of the touch
-	int64_t time; // system time when pressed
-	int area; // hud area unique id (TOUCHAREA_NONE = not caught by hud)
-	bool area_valid; // was the area of this touch checked this frame, if not, the area doesn't exist anymore
-	void ( *upfunc )( int id, int64_t time ); // function to call when the finger is released, time is 0 if cancelled
-} cg_touch_t;
-
-extern cg_touch_t cg_touches[];
-
-int CG_TouchArea( int area, int x, int y, int w, int h, void ( *upfunc )( int id, int64_t time ) );
-void CG_TouchEvent( int id, touchevent_t type, int x, int y, int64_t time );
-bool CG_IsTouchDown( int id );
-void CG_TouchFrame( void );
-void CG_CancelTouches( void );
-
-enum {
-	TOUCHPAD_MOVE,
-	TOUCHPAD_VIEW,
-
-	TOUCHPAD_COUNT
-};
-
-void CG_SetTouchpad( int padID, int touchID );
+void CG_ShowOverlayMenu( int state, bool showCursor );
 
 //
 // cg_hud.c
@@ -880,7 +895,6 @@ extern cvar_t *cg_projectileFireTrailAlpha;
 extern cvar_t *cg_bloodTrailAlpha;
 
 extern cvar_t *cg_cartoonEffects;
-extern cvar_t *cg_cartoonHitEffect;
 
 extern cvar_t *cg_explosionsRing;
 extern cvar_t *cg_explosionsDust;
@@ -906,7 +920,6 @@ extern cvar_t *cg_raceGhosts;
 extern cvar_t *cg_raceGhostsAlpha;
 extern cvar_t *cg_chatBeep;
 extern cvar_t *cg_chatFilter;
-extern cvar_t *cg_chatFilterTV;
 
 //force models
 extern cvar_t *cg_teamPLAYERSmodel;
@@ -964,7 +977,6 @@ char *_CG_CopyString( const char *in, const char *filename, int fileline );
 void CG_UseItem( const char *name );
 void CG_RegisterCGameCommands( void );
 void CG_UnregisterCGameCommands( void );
-void CG_UpdateTVServerString( void );
 void CG_AddAward( const char *str );
 void CG_OverrideWeapondef( int index, const char *cstring );
 
@@ -1026,7 +1038,6 @@ void CG_ResetColorBlend( void );
 void CG_StartKickAnglesEffect( vec3_t source, float knockback, float radius, int time );
 void CG_StartColorBlendEffect( float r, float g, float b, float a, int time );
 void CG_StartFallKickEffect( int bounceTime );
-float CG_GetSensitivityScale( float sens, float zoomSens );
 void CG_ViewSmoothPredictedSteps( vec3_t vieworg );
 float CG_ViewSmoothFallKick( void );
 void CG_RenderView( int frameTime, int realFrameTime, int64_t realTime, int64_t serverTime, float stereo_separation, unsigned extrapolationTime );
@@ -1037,6 +1048,9 @@ bool CG_SwitchChaseCamMode( void );
 //
 // cg_lents.c
 //
+
+#define IMPACT_POINT_OFFSET 2.0f
+
 void CG_ClearLocalEntities( void );
 void CG_AddLocalEntities( void );
 void CG_FreeLocalEntities( void );
@@ -1048,7 +1062,6 @@ void CG_Explosion2( const vec3_t pos );
 void CG_ProjectileTrail( centity_t *cent );
 void CG_NewBloodTrail( centity_t *cent );
 void CG_BloodDamageEffect( const vec3_t origin, const vec3_t dir, int damage );
-void CG_CartoonHitEffect( const vec3_t origin, const vec3_t dir, int damage );
 void CG_FlagTrail( const vec3_t origin, const vec3_t start, const vec3_t end, float r, float g, float b );
 void CG_GreenLaser( const vec3_t start, const vec3_t end );
 void CG_SmallPileOfGibs( const vec3_t origin, int damage, const vec3_t initialVelocity, int team );
@@ -1067,7 +1080,7 @@ void CG_SpawnSprite( const vec3_t origin, const vec3_t velocity, const vec3_t ac
 					 float radius, int time, int bounce, bool expandEffect, bool shrinkEffect,
 					 float r, float g, float b, float a,
 					 float light, float lr, float lg, float lb, struct shader_s *shader );
-void CG_LaserGunImpact( const vec3_t pos, const vec3_t dir, float radius, const vec3_t laser_dir, const vec4_t color );
+void CG_LaserGunImpact( const vec3_t pos, float radius, const vec3_t laser_dir, const vec4_t color );
 
 void CG_Dash( const entity_state_t *state );
 void CG_SpawnTracer( const vec3_t origin, const vec3_t dir, const vec3_t dir_per1, const vec3_t dir_per2 );
@@ -1101,6 +1114,8 @@ void CG_AddPolys( void );
 void CG_KillPolyBeamsByTag( int key );
 void CG_QuickPolyBeam( const vec3_t start, const vec3_t end, int width, struct shader_s *shader );
 void CG_LaserGunPolyBeam( const vec3_t start, const vec3_t end, const vec4_t color, int key );
+void CG_ElectroPolyboardBeam( const vec3_t start, const vec3_t end, int subdivisions, float phase, 
+	float range, const vec4_t color, int key, bool firstPerson );
 void CG_ElectroPolyBeam( const vec3_t start, const vec3_t end, int team );
 void CG_InstaPolyBeam( const vec3_t start, const vec3_t end, int team );
 void CG_PLink( const vec3_t start, const vec3_t end, const vec4_t color, int flags );
@@ -1181,18 +1196,111 @@ void CG_DrawChat( cg_gamechat_t *chat, int x, int y, char *fontName, struct qfon
 				  int width, int height, int padding_x, int padding_y, vec4_t backColor, struct shader_s *backShader );
 
 //
+// cg_ascript.cpp
+//
+void CG_asInitScriptEngine( void );
+void CG_asShutdownScriptEngine( void );
+bool CG_asLoadGameScript( void );
+void CG_asUnloadGameScript( void );
+
+bool CG_asLoadPMoveScript( void );
+void CG_asUnloadPMoveScript( void );
+void CG_asPMove( pmove_t *pm, player_state_t *ps, usercmd_t *cmd );
+void CG_asGetViewAnglesClamp( const player_state_t *ps, vec3_t clamp );
+
+void CG_asHUDInit( void );
+bool CG_asHUDDrawCrosshair( void );
+
+void CG_asInputInit( void );
+void CG_asInputShutdown( void );
+void CG_asInputFrame( int64_t inputTime );
+void CG_asInputClearState( void );
+bool CG_asInputKeyEvent( int key, bool down );
+void CG_asInputMouseMove( int mx, int my );
+unsigned CG_asGetButtonBits( void );
+void CG_asGetAngularMovement( vec3_t viewAngles );
+void CG_asGetMovement( vec3_t movement );
+
+void CG_asSetupCamera( cg_viewdef_t *view );
+void CG_asSetupRefdef( cg_viewdef_t *view );
+
+//
 // cg_input.cpp
 //
+
+/**
+* Touch area ID namespaces.
+*/
+enum {
+	TOUCHAREA_NONE,
+	TOUCHAREA_HUD
+	// next would be 0x101, 0x201... until 0xf01
+};
+
+enum {
+	TOUCHPAD_MOVE,
+	TOUCHPAD_VIEW,
+	TOUCHPAD_COUNT
+};
+
+#define TOUCHAREA_SUB_SHIFT 16
+#define TOUCHAREA_MASK ( ( 1 << TOUCHAREA_SUB_SHIFT ) - 1 )
+
+typedef struct {
+	bool down; // is the finger currently down?
+	int x, y; // current x and y of the touch
+	int64_t time; // system time when pressed
+	int area; // hud area unique id (TOUCHAREA_NONE = not caught by hud)
+	bool area_valid; // was the area of this touch checked this frame, if not, the area doesn't exist anymore
+	void ( *upfunc )( int id, int64_t time ); // function to call when the finger is released, time is 0 if cancelled
+} cg_touch_t;
+
+typedef struct {
+	int touch;
+	float x, y;
+} cg_touchpad_t;
+
 void CG_InitInput( void );
 void CG_ShutdownInput( void );
-void CG_InputFrame( int frameTime );
+void CG_InputFrame( int64_t inputTime );
 void CG_ClearInputState( void );
-
 void CG_MouseMove( int mx, int my );
-
+float CG_GetSensitivityScale( float sens, float zoomSens );
 unsigned int CG_GetButtonBits( void );
 void CG_AddViewAngles( vec3_t viewAngles );
 void CG_AddMovement( vec3_t movement );
+void CG_CenterView( float pitch );
+
+/*
+* Returns angular movement vector (in euler angles) obtained from the input.
+* Doesn't take flipping into account.
+*/
+void CG_GetAngularMovement( vec3_t movement );
+
+/*
+* Returns spatial movement vector obtained from the input.
+* Doesn't take flipping into account.
+*/
+void CG_GetMovement( vec3_t movement );
+
+void CG_SetTouchpad( int padID, int touchID );
+cg_touchpad_t *CG_GetTouchpad( int padID );
+
+int CG_TouchArea( int area, int x, int y, int w, int h, void ( *upfunc )( int id, int64_t time ) );
+
+/**
+* Passes the key press/up event to clientside game module.
+* Returns true if the action bound to the key should not be sent to the interpreter.
+*
+* @param key  key id
+* @param down true, if it's a button down event
+*/
+bool CG_KeyEvent( int key, bool down );
+
+void CG_TouchEvent( int id, touchevent_t type, int x, int y, int64_t time );
+cg_touch_t *CG_GetTouch( int id );
+bool CG_IsTouchDown( int id );
+void CG_CancelTouches( void );
 
 /**
  * Gets up to two bound keys for a command.
@@ -1202,7 +1310,5 @@ void CG_AddMovement( vec3_t movement );
  * @param keysSize output string buffer size
  */
 void CG_GetBoundKeysString( const char *cmd, char *keys, size_t keysSize );
-
-void CG_GetTouchMovement( vec3_t movement );
 
 //=================================================

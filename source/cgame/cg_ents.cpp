@@ -196,17 +196,16 @@ static void CG_NewPacketEntityState( entity_state_t *state ) {
 			memset( cent->localEffects, 0, sizeof( cent->localEffects ) );
 
 			// Init the animation when new into PVS
-			if( cg.frame.valid && ( state->type == ET_PLAYER || state->type == ET_CORPSE ) ) {
+			if( cg.frame.valid && ( state->type == ET_PLAYER || state->type == ET_CORPSE || state->type == ET_MONSTER_PLAYER || state->type == ET_MONSTER_CORPSE ) ) {
 				cent->lastAnims = 0;
 				memset( cent->lastVelocities, 0, sizeof( cent->lastVelocities ) );
 				memset( cent->lastVelocitiesFrames, 0, sizeof( cent->lastVelocitiesFrames ) );
 				CG_PModel_ClearEventAnimations( state->number );
 				memset( &cg_entPModels[state->number].animState, 0, sizeof( cg_entPModels[state->number].animState ) );
 
-				// if it's a player and new in PVS, remove the old power time
-				// This is way far from being the right thing. But will make it less bad for now
-				cg_entPModels[state->number].flash_time = cg.time;
-				cg_entPModels[state->number].barrel_time = cg.time;
+				// reset the weapon animation timers for new players
+				cg_entPModels[state->number].flash_time = 0;
+				cg_entPModels[state->number].barrel_time = 0;
 			}
 		} else {   // shuffle the last state to previous
 			cent->prev = cent->current;
@@ -292,10 +291,6 @@ static void CG_SetFramePlayerState( snapshot_t *frame, int index ) {
 		if( frame->playerState.pmove.pm_type != PM_SPECTATOR ) {
 			frame->playerState.pmove.pm_type = PM_CHASECAM;
 		}
-	}
-
-	if( cgs.tv ) {
-		frame->playerState.stats[STAT_REALTEAM] = TEAM_SPECTATOR;
 	}
 }
 
@@ -388,24 +383,6 @@ bool CG_NewFrameSnap( snapshot_t *frame, snapshot_t *lerpframe ) {
 		return false;
 	}
 
-	// request TV-channels if we haven't done so already
-	if( cgs.tv && !cgs.tvRequested ) {
-		const char *autowatch;
-
-		trap_Cmd_ExecuteText( EXEC_APPEND, "cmd channels\n" );
-
-		autowatch = trap_Cvar_String( "autowatch" );
-		if( autowatch && autowatch[0] ) {
-			trap_Cmd_ExecuteText( EXEC_APPEND, va( "cmd watch \"%s\"\n", autowatch ) ); // automatically join a channel
-			trap_Cvar_ForceSet( "autowatch", "" );
-		} else {
-			if( !cgs.configStrings[CS_WORLDMODEL][0] ) {
-				trap_Cmd_ExecuteText( EXEC_APPEND, "menu_open tv\n" ); // bring up the channels menu if in lobby
-			}
-		}
-		cgs.tvRequested = true;
-	}
-
 	cg.specStateChanged = SPECSTATECHANGED() || lerpframe == NULL || cg.firstFrame;
 
 	// a new server frame begins now
@@ -480,7 +457,7 @@ struct cmodel_s *CG_CModelForEntity( int entNum ) {
 		bmaxs[0] = bmaxs[1] = x;
 		bmins[2] = -zd;
 		bmaxs[2] = zu;
-		if( cent->type == ET_PLAYER || cent->type == ET_CORPSE ) {
+		if( cent->type == ET_PLAYER || cent->type == ET_CORPSE || cent->type == ET_MONSTER_PLAYER || cent->type == ET_MONSTER_CORPSE ) {
 			cmodel = trap_CM_OctagonModelForBBox( bmins, bmaxs );
 		} else {
 			cmodel = trap_CM_ModelForBBox( bmins, bmaxs );
@@ -547,7 +524,7 @@ static void CG_EntAddTeamColorTransitionEffect( centity_t *cent ) {
 	const vec4_t neutralcolor = { 1.0f, 1.0f, 1.0f, 1.0f };
 
 	f = (float)cent->current.counterNum / 255.0f;
-	clamp( f, 0.0f, 1.0f );
+	Q_clamp( f, 0.0f, 1.0f );
 
 	if( cent->current.type == ET_PLAYER || cent->current.type == ET_CORPSE ) {
 		currentcolor = CG_PlayerColorForEntity( cent->current.number, cent->ent.shaderRGBA );
@@ -724,7 +701,7 @@ void CG_LerpGenericEnt( centity_t *cent ) {
 			vec3_t origin, xorigin1, xorigin2;
 
 			float lerpfrac = cg.lerpfrac;
-			clamp( lerpfrac, 0.0f, 1.0f );
+			Q_clamp( lerpfrac, 0.0f, 1.0f );
 
 			// extrapolation with half-snapshot smoothing
 			if( cg.xerpTime >= 0 || !cent->canExtrapolatePrev ) {
@@ -858,9 +835,11 @@ static void CG_AddGenericEnt( centity_t *cent ) {
 		}
 
 		// add shadows for items (do it before offseting for weapons)
-		if( !( cent->renderfx & RF_NOSHADOW ) && cg_shadows->integer ) {
-			CG_AllocShadeBox( cent->current.number, cent->ent.origin, item_box_mins, item_box_maxs, NULL );
-			cent->ent.renderfx |= RF_NOSHADOW;
+		if( cg_shadows->integer && !( cent->renderfx & RF_NOSHADOW ) ) {
+			if( cg_shadows->integer == 1 ) {
+				CG_AllocShadeBox( cent->current.number, cent->ent.origin, item_box_mins, item_box_maxs, NULL );
+				cent->ent.renderfx |= RF_NOSHADOW;
+			}
 		} else {
 			cent->ent.renderfx |= RF_NOSHADOW;
 		}
@@ -872,7 +851,9 @@ static void CG_AddGenericEnt( centity_t *cent ) {
 			CG_PlaceModelOnTag( &cent->ent, &cent->ent, &cgs.weaponItemTag );
 		}
 	} else {
-		cent->ent.renderfx |= RF_NOSHADOW;
+		if( cent->current.solid != SOLID_BMODEL ) {
+			cent->ent.renderfx |= RF_NOSHADOW;
+		}
 	}
 
 	if( cent->skel ) {
@@ -973,7 +954,7 @@ void CG_AddFlagModelOnTag( centity_t *cent, byte_vec4_t teamcolor, const char *t
 		flag.renderfx = RF_NOSHADOW | RF_FULLBRIGHT;
 		flag.frame = flag.oldframe = 0;
 		flag.radius = 32.0f;
-		flag.customShader = CG_MediaShader( cgs.media.shaderFlagFlare );
+		flag.customShader = cgs.media.shaderFlagFlare;
 		flag.outlineHeight = 0;
 
 		CG_AddEntityToScene( &flag );
@@ -1104,6 +1085,35 @@ static void CG_AddPlayerEnt( centity_t *cent ) {
 		return;
 	}
 
+	if( cent->current.modelindex2 ) {
+		CG_AddLinkedModel( cent );
+	}
+}
+
+
+//==========================================================================
+//		ET_MONSTER_PLAYER
+//==========================================================================
+
+/*
+ * CG_AddMonsterPlayerEnt
+ */
+static void CG_AddPMonsterlayerEnt( centity_t *cent ) {
+	// render effects
+	cent->ent.renderfx = cent->renderfx;
+
+	// if set to invisible, skip
+	if( !cent->current.modelindex ) {
+		return;
+	}
+	
+	CG_AddPModel( cent );
+	
+	// corpses can never have a model in modelindex2
+	if( cent->current.type == ET_MONSTER_CORPSE ) {
+		return;
+	}
+	
 	if( cent->current.modelindex2 ) {
 		CG_AddLinkedModel( cent );
 	}
@@ -1469,7 +1479,7 @@ centity_t *CG_GetItemTimerEnt( int num ) {
 * CG_AddBeamEnt
 */
 static void CG_AddBeamEnt( centity_t *cent ) {
-	CG_QuickPolyBeam( cent->current.origin, cent->current.origin2, cent->current.frame * 0.5f, CG_MediaShader( cgs.media.shaderLaser ) ); // wsw : jalfixme: missing the color (comes inside cent->current.colorRGBA)
+	CG_QuickPolyBeam( cent->current.origin, cent->current.origin2, cent->current.frame * 0.5f, cgs.media.shaderLaser ); // wsw : jalfixme: missing the color (comes inside cent->current.colorRGBA)
 }
 
 //==========================================================================
@@ -1571,7 +1581,7 @@ static void CG_AddPortalSurfaceEnt( centity_t *cent ) {
 /*
 * CG_VideoSpeakerEntRawSamples
 */
-static void CG_UpdateVideoSpeakerEnt( void *centp,
+static void CG_VideoSpeakerEntRawSamples( void *centp,
 									  unsigned int samples, unsigned int rate,
 									  unsigned short width, unsigned short channels, const uint8_t *data ) {
 	centity_t *cent = ( centity_t * )centp;
@@ -1614,7 +1624,7 @@ static void CG_UpdateVideoSpeakerEnt( centity_t *cent ) {
 static void CG_AddVideoSpeakerEnt( centity_t *cent ) {
 	if( cent->cin ) {
 		trap_CIN_AddRawSamplesListener( cent->cin, cent,
-										CG_UpdateVideoSpeakerEnt, CG_VideoSpeakerEntGetRawSamples );
+										CG_VideoSpeakerEntRawSamples, CG_VideoSpeakerEntGetRawSamples );
 	}
 
 	// DEBUG
@@ -1925,8 +1935,28 @@ void CG_AddEntities( void ) {
 				canLight = true;
 				break;
 
+			case ET_MONSTER_PLAYER:
+				CG_AddPMonsterlayerEnt( cent );
+				if( cg_drawEntityBoxes->integer ) {
+					CG_DrawEntityBox( cent );
+				}
+				CG_EntityLoopSound( state, ATTN_IDLE );
+				CG_LaserBeamEffect( cent );
+				CG_WeaponBeamEffect( cent );
+				canLight = true;
+				break;
+
 			case ET_CORPSE:
 				CG_AddPlayerEnt( cent );
+				if( cg_drawEntityBoxes->integer ) {
+					CG_DrawEntityBox( cent );
+				}
+				CG_EntityLoopSound( state, ATTN_IDLE );
+				canLight = true;
+				break;
+
+			case ET_MONSTER_CORPSE:
+				CG_AddPMonsterlayerEnt( cent );
 				if( cg_drawEntityBoxes->integer ) {
 					CG_DrawEntityBox( cent );
 				}
@@ -2036,6 +2066,8 @@ void CG_LerpEntities( void ) {
 			case ET_PLAYER:
 			case ET_CORPSE:
 			case ET_FLAG_BASE:
+			case ET_MONSTER_PLAYER:
+			case ET_MONSTER_CORPSE:
 				if( state->linearMovement ) {
 					CG_ExtrapolateLinearProjectile( cent );
 				} else {
@@ -2128,7 +2160,7 @@ void CG_UpdateEntities( void ) {
 					CG_UpdateGenericEnt( cent );
 
 					// set the gib model ignoring the modelindex one
-					cent->ent.model = CG_MediaModel( cgs.media.modIlluminatiGibs );
+					cent->ent.model = cgs.media.modIlluminatiGibs;
 				}
 				break;
 
@@ -2154,6 +2186,8 @@ void CG_UpdateEntities( void ) {
 				break;
 			case ET_PLAYER:
 			case ET_CORPSE:
+			case ET_MONSTER_PLAYER:
+			case ET_MONSTER_CORPSE:
 				CG_UpdatePlayerModelEnt( cent );
 				break;
 

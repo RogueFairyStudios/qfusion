@@ -98,11 +98,6 @@ static void SV_CreateBaseline( void ) {
 		if( !svent->r.inuse ) {
 			continue;
 		}
-		if( !svent->s.modelindex && !svent->s.sound && !svent->s.effects ) {
-			continue;
-		}
-
-		svent->s.number = entnum;
 
 		//
 		// take current state as baseline
@@ -176,9 +171,9 @@ static void SV_ReloadPureList( void ) {
 		char *libname;
 		int libname_size;
 
-		libname_size = strlen( LIB_PREFIX ) + 5 + strlen( ARCH ) + strlen( LIB_SUFFIX ) + 1;
+		libname_size = strlen( LIB_PREFIX ) + 4 + strlen( LIB_SUFFIX ) + 1;
 		libname = Mem_TempMalloc( libname_size );
-		Q_snprintfz( libname, libname_size, LIB_PREFIX "game_" ARCH LIB_SUFFIX );
+		Q_snprintfz( libname, libname_size, LIB_PREFIX "game" LIB_SUFFIX );
 
 		if( !FS_PakNameForFile( libname ) ) {
 			if( sv_pure->integer ) {
@@ -211,7 +206,6 @@ static void SV_ReloadPureList( void ) {
 */
 void SV_SetServerConfigStrings( void ) {
 	Q_snprintfz( sv.configstrings[CS_MAXCLIENTS], sizeof( sv.configstrings[0] ), "%i", sv_maxclients->integer );
-	Q_strncpyz( sv.configstrings[CS_TVSERVER], "0", sizeof( sv.configstrings[0] ) );
 	Q_strncpyz( sv.configstrings[CS_HOSTNAME], Cvar_String( "sv_hostname" ), sizeof( sv.configstrings[0] ) );
 	Q_strncpyz( sv.configstrings[CS_MODMANIFEST], Cvar_String( "sv_modmanifest" ), sizeof( sv.configstrings[0] ) );
 }
@@ -372,44 +366,6 @@ void SV_InitGame( void ) {
 		}
 	}
 
-#ifdef TCP_ALLOW_CONNECT
-	if( sv_tcp->integer && ( dedicated->integer || sv_maxclients->integer > 1 ) ) {
-		bool err = true;
-
-		if( !NET_OpenSocket( &svs.socket_tcp, SOCKET_TCP, &address, true ) ) {
-			Com_Printf( "Error: Couldn't open TCP socket: %s\n", NET_ErrorString() );
-		} else {
-			NET_SetSocketNoDelay( &svs.socket_tcp, 1 );
-			if( !NET_Listen( &svs.socket_tcp ) ) {
-				Com_Printf( "Error: Couldn't listen to TCP socket: %s\n", NET_ErrorString() );
-				NET_CloseSocket( &svs.socket_tcp );
-			} else {
-				err = false;
-				socket_opened = true;
-			}
-		}
-
-		if( ipv6_address.type == NA_IP6 ) {
-			if( !NET_OpenSocket( &svs.socket_tcp6, SOCKET_TCP, &ipv6_address, true ) ) {
-				Com_Printf( "Error: Couldn't open TCP6 socket: %s\n", NET_ErrorString() );
-			} else {
-				NET_SetSocketNoDelay( &svs.socket_tcp6, 1 );
-				if( !NET_Listen( &svs.socket_tcp6 ) ) {
-					Com_Printf( "Error: Couldn't listen to TCP6 socket: %s\n", NET_ErrorString() );
-					NET_CloseSocket( &svs.socket_tcp6 );
-				} else {
-					err = false;
-					socket_opened = true;
-				}
-			}
-		}
-
-		if( err ) {
-			Cvar_ForceSet( "sv_tcp", "0" );
-		}
-	}
-#endif
-
 	if( dedicated->integer && !socket_opened ) {
 		Com_Error( ERR_FATAL, "Couldn't open any socket\n" );
 	}
@@ -495,12 +451,6 @@ void SV_ShutdownGame( const char *finalmsg, bool reconnect ) {
 	NET_CloseSocket( &svs.socket_loopback );
 	NET_CloseSocket( &svs.socket_udp );
 	NET_CloseSocket( &svs.socket_udp6 );
-#ifdef TCP_ALLOW_CONNECT
-	if( sv_tcp->integer ) {
-		NET_CloseSocket( &svs.socket_tcp );
-		NET_CloseSocket( &svs.socket_tcp6 );
-	}
-#endif
 
 	// get any latched variable changes (sv_maxclients, etc)
 	Cvar_GetLatchedVars( CVAR_LATCH );
@@ -583,15 +533,6 @@ void SV_Map( const char *level, bool devmap ) {
 		// needs to reconnect
 		if( svs.clients[i].state > CS_CONNECTING ) {
 			svs.clients[i].state = CS_CONNECTING;
-		}
-
-		// limit number of connected multiview clients
-		if( svs.clients[i].mv ) {
-			if( sv.num_mv_clients < sv_maxmvclients->integer ) {
-				sv.num_mv_clients++;
-			} else {
-				svs.clients[i].mv = false;
-			}
 		}
 
 		svs.clients[i].lastframe = -1;

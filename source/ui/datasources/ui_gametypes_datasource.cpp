@@ -5,13 +5,14 @@
 
 namespace WSWUI
 {
-GameTypesDataSource::GameTypesDataSource() : Rocket::Controls::DataSource( "gametypes_source" ) {
+GameTypesDataSource::GameTypesDataSource() : Rml::Controls::DataSource( "gametypes_source" ) {
 	std::vector<std::string> listedGameTypes;
 	getFileList( listedGameTypes, "progs/gametypes", ".gt" );
 
 	for( std::vector<std::string>::const_iterator it = listedGameTypes.begin();
 		 it != listedGameTypes.end(); ++it ) {
-		if( std::find_if( gameTypes.begin(), gameTypes.end(), std::bind2nd( cmp_gametypes_by_id(), *it ) ) == gameTypes.end() ) {
+		if( std::find_if( gameTypes.begin(), gameTypes.end(), [it](const gametype& elem) { return elem.name == *it; } ) == gameTypes.end() )
+			{
 			gametype gt( *it );
 
 			if( gt.name == "tutorial" ) {
@@ -63,12 +64,12 @@ GameTypesDataSource::GameTypesDataSource() : Rocket::Controls::DataSource( "game
 	}
 }
 
-void GameTypesDataSource::GetRow( Rocket::Core::StringList &row, const Rocket::Core::String&, int row_index, const Rocket::Core::StringList& cols ) {
+void GameTypesDataSource::GetRow( Rml::Core::StringList &row, const Rml::Core::String&, int row_index, const Rml::Core::StringList& cols ) {
 	if( row_index < 0 || (size_t)row_index >= gameTypes.size() ) {
 		return;
 	}
 
-	for( Rocket::Core::StringList::const_iterator it = cols.begin();
+	for( Rml::Core::StringList::const_iterator it = cols.begin();
 		 it != cols.end();
 		 ++it ) {
 		if( *it == "name" ) {
@@ -83,7 +84,7 @@ void GameTypesDataSource::GetRow( Rocket::Core::StringList &row, const Rocket::C
 	}
 }
 
-int GameTypesDataSource::GetNumRows( const Rocket::Core::String & ) {
+int GameTypesDataSource::GetNumRows( const Rml::Core::String & ) {
 	return gameTypes.size();
 }
 }

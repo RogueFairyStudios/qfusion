@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2013 Victor Luchits
+Copyright (C) 2017 Victor Luchits
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -23,435 +23,918 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 /*
 =============================================================
 
-STANDARD PROJECTIVE SHADOW MAPS (SSM)
+OMNIDIRECTIONAL SHADOW MAPS
 
 =============================================================
 */
 
-#define SHADOWMAP_ORTHO_NUDGE           8
-#define SHADOWMAP_MIN_VIEWPORT_SIZE     16
-#define SHADOWMAP_MAX_LOD               15
-#define SHADOWMAP_LODBIAS               1
+typedef struct shadowSurfBatch_s {
+	int pass;
+	unsigned shaderId;
+	bool sky;
 
-//static bool r_shadowGroups_sorted;
+	int firstElem;
+	int firstVert, lastVert;
+	int numElems;
+	int numInstances;
+	int numWorldSurfaces;
 
-#define SHADOWGROUPS_HASH_SIZE  8
-static shadowGroup_t *r_shadowGroups_hash[SHADOWGROUPS_HASH_SIZE];
+	int vbo;
+	int elemsVbo;
+	elem_t *elemsBuffer;
+	void *cacheMark;
+
+	drawSurfaceCompiledLight_t drawSurf;
+
+	rtlight_t *light;
+	instancePoint_t *instances;
+
+	struct shadowSurfBatch_s *prev, *next, *tail;
+} shadowSurfBatch_t;
+
+static lightmapAllocState_t shadowAtlasAlloc;
 
 /*
-* R_ClearShadowGroups
+* R_OpaqueShadowShader
 */
-void R_ClearShadowGroups( void ) {
-	rsc.numShadowGroups = 0;
-	memset( rsc.entShadowGroups, 0, sizeof( *rsc.entShadowGroups ) * MAX_REF_ENTITIES );
-	memset( rsc.entShadowBits, 0, sizeof( *rsc.entShadowBits ) * MAX_REF_ENTITIES );
-	memset( r_shadowGroups_hash, 0, sizeof( r_shadowGroups_hash ) );
+const shader_t *R_OpaqueShadowShader( const shader_t *shader ) {
+	bool sky, portal;
+
+	sky = ( shader->flags & SHADER_SKY ) != 0;
+	portal = ( shader->flags & SHADER_PORTAL ) != 0;
+
+	if( portal ) {
+		return NULL;
+	}
+	if( sky ) {
+		if( !mapConfig.writeSkyDepth ) {
+			return NULL;
+		}
+	} else {
+		if( !Shader_DepthWrite( shader ) ) {
+			return NULL;
+		}
+	}
+
+	// use a simplistic dummy opaque shader if we can
+	if( ( shader->sort <= SHADER_SORT_SKY ) && !shader->numdeforms && Shader_CullFront( shader ) ) {
+		return rsh.envShader;
+	}
+	return shader;
 }
 
 /*
-* R_AddLightOccluder
+* R_DrawCompiledLightSurf
 */
-bool R_AddLightOccluder( const entity_t *ent ) {
-	int i;
-	float maxSide;
-	vec3_t origin;
-	unsigned int hash_key;
-	shadowGroup_t *group;
-	mleaf_t *leaf;
-	vec3_t mins, maxs, bbox[8];
-	bool bmodelRotated = false;
-
-	if( rn.refdef.rdflags & RDF_NOWORLDMODEL ) {
-		return false;
-	}
-	if( !ent->model || ent->model->type == mod_brush ) {
-		return false;
+void R_DrawCompiledLightSurf( const entity_t *e, const shader_t *shader, const mfog_t *fog, 
+	int lightStyleNum, const portalSurface_t *portalSurface, drawSurfaceCompiledLight_t *drawSurf ) {
+	if( !drawSurf->numElems ) {
+		return;
 	}
 
-	VectorCopy( ent->lightingOrigin, origin );
-	if( ent->model->type == mod_brush ) {
-		vec3_t t;
-		VectorAdd( ent->model->mins, ent->model->maxs, t );
-		VectorMA( ent->origin, 0.5, t, origin );
+	RB_BindVBO( drawSurf->vbo, GL_TRIANGLES );
+
+	if( drawSurf->numInstances ) {
+		RB_DrawElementsInstanced( drawSurf->firstVert, drawSurf->numVerts, 
+			drawSurf->firstElem, drawSurf->numElems, drawSurf->numInstances, drawSurf->instances );
+		return;
 	}
 
-	if( VectorCompare( origin, vec3_origin ) ) {
-		return false;
-	}
-
-	// find lighting group containing entities with same lightingOrigin as ours
-	hash_key = (unsigned int)( origin[0] * 7 + origin[1] * 5 + origin[2] * 3 );
-	hash_key &= ( SHADOWGROUPS_HASH_SIZE - 1 );
-
-	for( group = r_shadowGroups_hash[hash_key]; group; group = group->hashNext ) {
-		if( VectorCompare( group->origin, origin ) ) {
-			goto add; // found an existing one, add
-		}
-	}
-
-	if( rsc.numShadowGroups == MAX_SHADOWGROUPS ) {
-		return false; // no free groups
-
-	}
-	leaf = Mod_PointInLeaf( origin, rsh.worldModel );
-
-	// start a new group
-	group = &rsc.shadowGroups[rsc.numShadowGroups];
-	memset( group, 0, sizeof( *group ) );
-	group->id = group - rsc.shadowGroups + 1;
-	group->bit = ( 1 << rsc.numShadowGroups );
-	group->vis = Mod_ClusterPVS( leaf->cluster, rsh.worldModel );
-	group->useOrtho = true;
-	group->alpha = r_shadows_alpha->value;
-
-	// clear group bounds
-	VectorCopy( origin, group->origin );
-	ClearBounds( group->mins, group->maxs );
-	ClearBounds( group->visMins, group->visMaxs );
-
-	// add to hash table
-	group->hashNext = r_shadowGroups_hash[hash_key];
-	r_shadowGroups_hash[hash_key] = group;
-
-	rsc.numShadowGroups++;
-add:
-	// get model bounds
-	if( ent->model->type == mod_alias ) {
-		R_AliasModelBBox( ent, mins, maxs );
-	} else if( ent->model->type == mod_skeletal ) {
-		R_SkeletalModelBBox( ent, mins, maxs );
-	} else if( ent->model->type == mod_brush ) {
-		R_BrushModelBBox( ent, mins, maxs, &bmodelRotated );
-	} else {
-		ClearBounds( mins, maxs );
-	}
-
-	maxSide = 0;
-	for( i = 0; i < 3; i++ ) {
-		if( mins[i] >= maxs[i] ) {
-			return false;
-		}
-		maxSide = max( maxSide, maxs[i] - mins[i] );
-	}
-
-	// ignore tiny objects
-	if( maxSide < 10 ) {
-		return false;
-	}
-
-	rsc.entShadowGroups[R_ENT2NUM( ent )] = group->id;
-	if( ent->flags & RF_WEAPONMODEL ) {
-		return true;
-	}
-
-	if( ent->model->type == mod_brush ) {
-		VectorCopy( mins, group->mins );
-		VectorCopy( maxs, group->maxs );
-	} else {
-		// rotate local bounding box and compute the full bounding box for this group
-		R_TransformBounds( ent->origin, ent->axis, mins, maxs, bbox );
-		for( i = 0; i < 8; i++ ) {
-			AddPointToBounds( bbox[i], group->mins, group->maxs );
-		}
-	}
-
-	// increase projection distance if needed
-	VectorSubtract( group->mins, origin, mins );
-	VectorSubtract( group->maxs, origin, maxs );
-	group->radius = RadiusFromBounds( mins, maxs );
-	group->projDist = max( group->projDist, group->radius + min( r_shadows_projection_distance->value, 64.0f ) );
-
-	return true;
+	RB_DrawElements( drawSurf->firstVert, drawSurf->numVerts, drawSurf->firstElem, drawSurf->numElems );
 }
 
 /*
-* R_ComputeShadowmapBounds
+* R_BatchShadowSurfElems
 */
-static void R_ComputeShadowmapBounds( void ) {
-	unsigned int i;
-	vec3_t lightDir;
-	vec4_t lightDiffuse;
-	vec3_t mins, maxs;
-	shadowGroup_t *group;
+static void R_BatchShadowSurfElems( shadowSurfBatch_t *batch, int vertsOffset, const msurface_t *surf, bool cull ) {
+	elem_t *oe = batch->elemsBuffer + batch->numElems;
+	const rtlight_t *l = batch->light;
 
-	for( i = 0; i < rsc.numShadowGroups; i++ ) {
-		group = rsc.shadowGroups + i;
+	batch->numElems += R_CullRtLightSurfaceTriangles( l, surf, cull, vertsOffset, oe, &batch->firstVert, &batch->lastVert );
+}
 
-		if( group->projDist <= 1.0f ) {
-			group->bit = 0;
+/*
+* R_UpdateBatchShadowDrawSurf
+*/
+static void R_UpdateBatchShadowDrawSurf( shadowSurfBatch_t *batch ) {
+	drawSurfaceCompiledLight_t *drawSurf;
+
+	drawSurf = &batch->drawSurf;
+	drawSurf->type = ST_COMPILED_LIGHT;
+	drawSurf->firstVert = batch->firstVert;
+	drawSurf->numVerts = batch->lastVert - batch->firstVert + 1;
+	drawSurf->firstElem = batch->firstElem;
+	drawSurf->numElems = batch->numElems;
+	drawSurf->vbo = batch->elemsVbo;
+	drawSurf->numInstances = batch->numInstances;
+}
+
+/*
+* R_UploadBatchShadowElems
+*/
+static void R_UploadBatchShadowElems( shadowSurfBatch_t *batch ) {
+	if( batch->numElems ) {
+		mesh_t mesh;
+		mesh_vbo_t *elemsVbo;
+
+		memset( &mesh, 0, sizeof( mesh_t ) );
+		mesh.numElems = batch->numElems;
+		mesh.elems = batch->elemsBuffer;
+
+		elemsVbo = R_CreateElemsVBO( batch->light, R_GetVBOByIndex( batch->vbo ), batch->numElems, VBO_TAG_WORLD );
+		R_UploadVBOElemData( elemsVbo, 0, 0, &mesh );
+
+		batch->elemsVbo = elemsVbo->index;
+	}
+
+	R_UpdateBatchShadowDrawSurf( batch );
+
+	R_FrameCache_FreeToMark( batch->cacheMark );
+
+	batch->elemsBuffer = NULL;
+	batch->cacheMark = NULL;
+}
+
+/*
+* R_BatchCompileShadowSurf
+*/
+static void R_BatchCompileShadowSurf( shadowSurfBatch_t *batch, const entity_t *e, const shader_t *shader,
+	int lightStyleNum, drawSurfaceBSP_t *drawSurf, msurface_t *surf ) {
+	int vbo;
+	int vertsOffset;
+	int numVerts, numElems;
+	int numInstances;
+	instancePoint_t *instances;
+	shadowSurfBatch_t *tail;
+	bool sky = (surf->flags & SURF_SKY) != 0;
+	bool cull = !sky && (r_shadows_culltriangles->integer != 0);
+
+	if( e != rsc.worldent ) {
+		return;
+	}
+
+	vbo = drawSurf->vbo;
+	numVerts = surf->mesh.numVerts;
+	numElems = surf->mesh.numElems;
+	numInstances = drawSurf->numInstances;
+	instances = drawSurf->instances;
+	vertsOffset = drawSurf->firstVboVert + surf->firstDrawSurfVert;
+
+	tail = batch->tail;
+
+	if( tail->vbo != vbo || tail->shaderId != shader->id || 
+		tail->numInstances != 0 || numInstances != 0 || 
+		tail->numElems + numElems > UINT16_MAX || tail->sky != sky ) {
+		if( tail->pass ) {
+			R_UploadBatchShadowElems( tail );
+		}
+
+		if( !tail->next ) {
+			tail->next = Mod_Malloc( rsh.worldModel, sizeof( shadowSurfBatch_t ) );
+			tail->next->prev = tail;
+		}
+		batch->tail = tail->next;
+		tail = tail->next;
+
+		if( tail->pass ) {
+			if( numInstances ) {
+				tail->elemsVbo = tail->vbo;
+				tail->numElems = numElems;
+				tail->firstVert = drawSurf->firstVboVert + surf->firstDrawSurfVert;
+				tail->lastVert = tail->firstVert + numVerts - 1;
+				tail->firstElem = drawSurf->firstVboElem + surf->firstDrawSurfElem;
+				R_UpdateBatchShadowDrawSurf( tail );
+				return;
+			}
+
+			tail->cacheMark = R_FrameCache_SetMark();
+			tail->elemsBuffer = R_FrameCache_Alloc( sizeof( elem_t ) * tail->numElems );
+			tail->numElems = 0;
+			tail->firstVert = UINT16_MAX;
+			tail->lastVert = 0;
+			R_BatchShadowSurfElems( tail, vertsOffset, surf, cull );
+			return;
+		}
+
+		tail->sky = sky;
+		tail->light = rn.rtLight;
+		tail->vbo = vbo;
+		tail->shaderId = shader->id;
+		tail->numElems = numElems;
+		tail->numInstances = numInstances;
+		tail->instances = instances;
+		tail->numWorldSurfaces = 1;
+		return;
+	}
+
+	if( tail->pass ) {
+		R_BatchShadowSurfElems( tail, vertsOffset, surf, cull );
+		return;
+	}
+
+	tail->numElems += numElems;
+	tail->numWorldSurfaces++;
+}
+
+/*
+* R_CompileLightSideView
+*/
+static void R_CompileLightSideView( rtlight_t *l, int side ) {
+	shadowSurfBatch_t head;
+	shadowSurfBatch_t *p, *next = NULL;
+
+	if( l->compiledSurf[side] ) {
+		return;
+	}
+
+	memset( &head, 0, sizeof( head ) );
+	head.tail = &head;
+
+	// walk the sorted list, batching BSP geometry
+	R_WalkDrawList( &r_shadowlist, (walkDrawSurf_cb_cb)&R_BatchCompileShadowSurf, &head );
+	R_WalkDrawList( &r_shadowportallist, (walkDrawSurf_cb_cb)&R_BatchCompileShadowSurf, &head );
+
+	for( p = head.next; p && p != &head; p = next ) {
+		next = p->next;
+		p->pass++;
+	}
+
+	if( !head.next ) {
+		// create a stub batch so that the early exit check above won't fail
+		head.next = Mod_Malloc( rsh.worldModel, sizeof( shadowSurfBatch_t ) );
+	} else {
+		// walk the list again, now uploading elems to newly created VBO's
+		head.tail = &head;
+		R_WalkDrawList( &r_shadowlist, (walkDrawSurf_cb_cb)&R_BatchCompileShadowSurf, &head );
+		R_WalkDrawList( &r_shadowportallist, (walkDrawSurf_cb_cb)&R_BatchCompileShadowSurf, &head );
+		R_UploadBatchShadowElems( head.tail );
+	}
+
+	l->compiledSurf[side] = head.next;
+}
+
+/*
+* R_TouchCompiledRtLightShadows
+*/
+void R_TouchCompiledRtLightShadows( rtlight_t *l ) {
+	int side;
+	shadowSurfBatch_t *b;
+
+	for( side = 0; side < 6; side++ ) {
+		if( !l->compiledSurf[side] ) {
 			continue;
 		}
 
-		// get projection dir from lightgrid
-		R_LightForOrigin( group->origin, lightDir, group->lightAmbient, lightDiffuse, group->projDist, false );
+		for( b = l->compiledSurf[side]; b && b->shaderId; b = b->next ) {
+			R_TouchMeshVBO( R_GetVBOByIndex( b->elemsVbo ) );
 
-		// prevent light dir from going upwards
-		VectorSet( lightDir, -lightDir[0], -lightDir[1], -fabs( lightDir[2] ) );
-		VectorNormalize2( lightDir, group->lightDir );
-
-		VectorScale( group->lightDir, group->projDist, lightDir );
-		VectorScale( group->lightDir, group->projDist * 2.0f, lightDir );
-		VectorAdd( group->mins, lightDir, mins );
-		VectorAdd( group->maxs, lightDir, maxs );
-
-		AddPointToBounds( group->mins, group->visMins, group->visMaxs );
-		AddPointToBounds( group->maxs, group->visMins, group->visMaxs );
-		AddPointToBounds( mins, group->visMins, group->visMaxs );
-		AddPointToBounds( maxs, group->visMins, group->visMaxs );
-
-		VectorAdd( group->visMins, group->visMaxs, group->visOrigin );
-		VectorScale( group->visOrigin, 0.5, group->visOrigin );
-		VectorSubtract( group->visMins, group->visOrigin, mins );
-		VectorSubtract( group->visMaxs, group->visOrigin, maxs );
-		group->visRadius = RadiusFromBounds( mins, maxs );
+			R_TouchShader( R_ShaderById( b->shaderId ) );
+		}
 	}
 }
 
 /*
-* R_BuildShadowGroups
+* R_DrawRtLightWorld
 */
-void R_BuildShadowGroups( void ) {
-	R_ComputeShadowmapBounds();
+void R_DrawRtLightWorld( void ) {
+	int side;
+	rtlight_t *l;
+	shadowSurfBatch_t *b;
+
+	l = rn.rtLight;
+	side = rn.rtLightSide;
+
+	assert( l != NULL );
+	if( !l ) {
+		return;
+	}
+
+	if( !l->compiledSurf[side] || !r_shadows_usecompiled->integer ) {
+		R_DrawWorldShadowNode();
+		return;
+	}
+
+	for( b = l->compiledSurf[side]; b && b->shaderId; b = b->next ) {
+		shader_t *shader = R_ShaderById( b->shaderId );
+		if( b->sky ) {
+			R_AddSurfToDrawList( rn.portalmasklist, rsc.worldent, shader, NULL, -1, 0, 0, NULL, &b->drawSurf );
+		}
+		R_AddSurfToDrawList( rn.meshlist, rsc.worldent, shader, NULL, -1, 0, 0, NULL, &b->drawSurf );
+	}
 }
 
 /*
-* R_FitOccluder
-*
-* returns farclip value
+* R_ComputeShadowCascades
 */
-static float R_FitOccluder( const shadowGroup_t *group, refdef_t *refdef ) {
-	int i;
-	float x1, x2, y1, y2, z1, z2;
-	int ix1, ix2, iy1, iy2, iz1, iz2;
-	int sizex = refdef->width, sizey = refdef->height;
-	int diffx, diffy;
-	mat4_t cameraMatrix, projectionMatrix, cameraProjectionMatrix;
-	bool useOrtho = refdef->rdflags & RDF_USEORTHO ? true : false;
+static void R_ComputeShadowCascades( const refinst_t *rpn, rtlight_t *l, int border ) {
+	int i, j;
+	int numCascades;
+	mat4_t viewProj;
+	vec_t dists[MAX_SHADOW_CASCADES+1];
+	float nearClip, farClip;
+	float zRange, zRatio;
+	const float minRadius = r_shadows_cascades_minradius->value;
+	const float lambda = r_shadows_cascades_lambda->value;
+	vec3_t visMins, visMaxs;
 
-	Matrix4_Modelview( refdef->vieworg, refdef->viewaxis, cameraMatrix );
-
-	// use current view settings for first approximation
-	if( useOrtho ) {
-		Matrix4_OrthogonalProjection( -refdef->ortho_x, refdef->ortho_x, -refdef->ortho_y, refdef->ortho_y,
-									  -group->projDist, group->projDist, projectionMatrix );
-	} else {
-		Matrix4_PerspectiveProjection( refdef->fov_x, refdef->fov_y,
-									   Z_NEAR, group->projDist, rf.cameraSeparation, projectionMatrix );
+	if( !l->cascaded || l->radius < minRadius ) {
+		l->shadowCascades = 1;
+		memset( l->splitOrtho[0], 0, sizeof( l->splitOrtho[0] ) );
+		return;
 	}
 
-	Matrix4_Multiply( projectionMatrix, cameraMatrix, cameraProjectionMatrix );
+	nearClip = rpn->nearClip;
+	farClip = BoundsFurthestDistance( rpn->lodOrigin, l->worldmins, l->worldmaxs );
 
-	// compute optimal fov to increase depth precision (so that shadow group objects are
-	// as close to the nearplane as possible)
-	// note that it's suboptimal to use bbox calculated in worldspace (FIXME)
-	x1 = y1 = z1 = 999999;
-	x2 = y2 = z2 = -999999;
-	for( i = 0; i < 8; i++ ) {
-		// compute and rotate a full bounding box
-		vec3_t v;
-		vec4_t temp, temp2;
+	zRange = farClip - nearClip;
+	zRatio = farClip / nearClip;
 
-		temp[0] = ( ( i & 1 ) ? group->mins[0] : group->maxs[0] );
-		temp[1] = ( ( i & 2 ) ? group->mins[1] : group->maxs[1] );
-		temp[2] = ( ( i & 4 ) ? group->mins[2] : group->maxs[2] );
-		temp[3] = 1.0f;
+	numCascades = Q_rint( 2.0 * l->radius / minRadius );
+	clamp_high( numCascades, MAX_SHADOW_CASCADES );
 
-		// transform to screen space
-		Matrix4_Multiply_Vector( cameraProjectionMatrix, temp, temp2 );
+	for( i = 0; i < numCascades; i++ ) {
+		float scale = 1.0f * i / (float)numCascades;
+		float log = nearClip * pow( zRatio, scale );
+		float uniform = nearClip + zRange * scale;
+		dists[i] = lambda * (log - uniform) + uniform;
+	}
+	dists[i] = farClip;
 
-		if( temp2[3] ) {
-			v[0] = ( temp2[0] / temp2[3] + 1.0f ) * 0.5f * refdef->width;
-			v[1] = ( temp2[1] / temp2[3] + 1.0f ) * 0.5f * refdef->height;
-			v[2] = ( temp2[2] / temp2[3] + 1.0f ) * 0.5f * group->projDist;
-		} else {
-			v[0] = 999999;
-			v[1] = 999999;
-			v[2] = 999999;
+	Matrix4_Multiply( l->projectionMatrix, l->worldToLightMatrix, viewProj );
+
+	CopyBounds( l->worldmins, l->worldmaxs, visMins, visMaxs );
+	//ClipBounds( visMins, visMaxs, rn.visMins, rn.visMaxs );
+
+	l->shadowCascades = 0;
+
+	for( i = 0; i < numCascades; i++ ) {
+		vec_t splitRadius, splitFarClipOff;
+		vec3_t splitCentre;
+		vec3_t splitCorners[8];
+		vec3_t splitMins, splitMaxs;
+
+		splitRadius = R_ComputeVolumeSphereForFrustumSplit( rpn, dists[i], dists[i+1], splitCentre );
+		splitRadius = ceil( splitRadius );
+		splitRadius += border;
+
+		BoundsFromRadius( splitCentre, splitRadius, splitMins, splitMaxs );
+		if( !BoundsOverlap( splitMins, splitMaxs, l->worldmins, l->worldmaxs ) ) {
+			continue;
 		}
 
-		x1 = min( x1, v[0] ); y1 = min( y1, v[1] ); z1 = min( z1, v[2] );
-		x2 = max( x2, v[0] ); y2 = max( y2, v[1] ); z2 = max( z2, v[2] );
-	}
+		// calculate the farclip offset
+		BoundsCorners( splitMins, splitMaxs, splitCorners );
 
-	// give it 1 pixel gap on both sides
-	ix1 = x1 - 1.0f; ix2 = x2 + 1.0f;
-	iy1 = y1 - 1.0f; iy2 = y2 + 1.0f;
-	iz1 = z1 - 1.0f; iz2 = z2 + 1.0f;
+		splitFarClipOff = 0.0f;
+		for( j = 0; j < 8; j++ ) {
+			vec_t dist = PlaneDiff( splitCorners[j], &l->frustum[5] );
+			if( j == 0 || dist < splitFarClipOff ) {
+				splitFarClipOff = dist;
+			}
+			if( splitFarClipOff < 0 ) {
+				break;
+			}
+		}
 
-	diffx = sizex - min( ix1, sizex - ix2 ) * 2;
-	diffy = sizey - min( iy1, sizey - iy2 ) * 2;
+		if( splitFarClipOff < 0 ) {
+			splitFarClipOff = 0;
+		}
 
-	// adjust fov (for perspective projection)
-	refdef->fov_x = 2 * RAD2DEG( atan( (float)diffx / (float)sizex ) );
-	refdef->fov_y = 2 * RAD2DEG( atan( (float)diffy / (float)sizey ) );
+		Matrix4_CropMatrixParams( splitCorners, viewProj, l->splitOrtho[l->shadowCascades] );
+		l->splitOrtho[l->shadowCascades][4] = -1.0;
+		l->splitOrtho[l->shadowCascades][6] = 1.0; // indicate it's a real split
+		l->splitOrtho[l->shadowCascades][7] = splitFarClipOff;
+		l->shadowCascades++;
 
-	// adjust ortho clipping settings
-	refdef->ortho_x = ix2 - ix1 + SHADOWMAP_ORTHO_NUDGE;
-	refdef->ortho_y = iy2 - iy1 + SHADOWMAP_ORTHO_NUDGE;
-
-	return useOrtho ? max( iz1, iz2 ) : group->projDist;
-}
-
-/*
-* R_SetupShadowmapView
-*/
-static float R_SetupShadowmapView( shadowGroup_t *group, refdef_t *refdef, int lod ) {
-	int width, height;
-	float farClip;
-	image_t *shadowmap;
-
-	// clamp LOD to a sane value
-	clamp( lod, 0, SHADOWMAP_MAX_LOD );
-
-	shadowmap = group->shadowmap;
-	width = shadowmap->upload_width >> lod;
-	height = shadowmap->upload_height >> lod;
-	if( !width || !height ) {
-		return 0.0f;
-	}
-
-	refdef->x = 0;
-	refdef->y = 0;
-	refdef->width = width;
-	refdef->height = height;
-	// default fov to 90, R_SetupFrame will most likely alter the values to give depth more precision
-	refdef->fov_x = 90;
-	refdef->fov_y = CalcFov( refdef->fov_x, refdef->width, refdef->height );
-	refdef->ortho_x = refdef->width;
-	refdef->ortho_y = refdef->height;
-	refdef->rdflags = group->useOrtho ? RDF_USEORTHO : 0;
-
-	// set the view matrix
-	// view axis are expected to be FLU (forward left up)
-	NormalVectorToAxis( group->lightDir, refdef->viewaxis );
-	VectorInverse( &refdef->viewaxis[AXIS_RIGHT] );
-
-	// position the light source in the opposite direction
-	VectorMA( group->origin, -group->projDist * 0.5, group->lightDir, refdef->vieworg );
-
-	// attempt to maximize the area the occulder occupies in viewport
-	farClip = R_FitOccluder( group, refdef );
-
-	// store viewport and texture parameters for group, we'll need them later as GLSL uniforms
-	group->viewportSize[0] = refdef->width;
-	group->viewportSize[1] = refdef->height;
-	group->textureSize[0] = shadowmap->upload_width;
-	group->textureSize[1] = shadowmap->upload_height;
-
-	return farClip;
-}
-
-/*
-* R_DrawShadowmaps
-*/
-void R_DrawShadowmaps( void ) {
-	unsigned int i;
-	image_t *shadowmap;
-	int textureWidth, textureHeight;
-	float lodScale;
-	vec3_t lodOrigin;
-	vec3_t viewerOrigin;
-	shadowGroup_t *group;
-	int shadowBits = rn.shadowBits;
-	refdef_t refdef;
-	int lod;
-	float farClip;
-	float dist;
-
-	if( !rsc.numShadowGroups ) {
-		return;
-	}
-	if( rn.renderFlags & RF_SHADOWMAPVIEW ) {
-		return;
-	}
-	if( rn.refdef.rdflags & RDF_NOWORLDMODEL ) {
-		return;
-	}
-	if( !shadowBits ) {
-		return;
-	}
-
-	if( !R_PushRefInst() ) {
-		return;
-	}
-
-	lodScale = rn.lod_dist_scale_for_fov;
-	VectorCopy( rn.lodOrigin, lodOrigin );
-	VectorCopy( rn.viewOrigin, viewerOrigin );
-
-	refdef = rn.refdef;
-
-	// find lighting group containing entities with same lightingOrigin as ours
-	for( i = 0; i < rsc.numShadowGroups; i++ ) {
-		if( !shadowBits ) {
+		if( BoundsInsideBounds( visMins, visMaxs, splitMins, splitMaxs ) ) {
 			break;
 		}
+	}
+}
 
-		group = rsc.shadowGroups + i;
-		if( !( shadowBits & group->bit ) ) {
+/*
+* R_DrawRtLightOrthoShadow
+*/
+static void R_DrawRtLightOrthoShadow( refinst_t *rnp, rtlight_t *l, image_t *target, int sideMask, bool compile, bool novis, refinst_t *prevrn ) {
+	int i;
+	int x, y, size, border;
+	int cascades;
+	vec_t fract;
+	refdef_t *fd;
+	mat4_t crop;
+
+	size = l->shadowSize;
+	border = l->shadowBorder;
+	x = l->shadowOffset[0];
+	y = l->shadowOffset[1];
+	fract = 2.0f / (size - border * 2);
+
+	fd = &rnp->refdef;
+	fd->rdflags = 0;
+	VectorCopy( l->origin, fd->vieworg );
+	Matrix3_Copy( l->axis, fd->viewaxis );
+	fd->fov_x = fd->fov_y = 90;
+	fd->width = size - border * 2;
+	fd->height = size - border * 2;
+
+	// ignore current frame's area vis when compiling shadow geometry
+	if( compile ) {
+		fd->areabits = NULL;
+	}
+
+	if( (sideMask & 1) == 0 ) {
+		return;
+	}
+
+	rnp->rtLight = l;
+	rnp->rtLightSide = 0;
+
+	rnp->renderFlags = RF_SHADOWMAPVIEW;
+	if( l->sky ) {
+		novis = true;
+		rnp->renderFlags |= RF_SKYSHADOWVIEW;
+	}
+	if( !( target->flags & IT_DEPTH ) ) {
+		rnp->renderFlags |= RF_SHADOWMAPVIEW_RGB;
+	}
+	if( compile ) {
+		rnp->renderFlags |= RF_NOENTS;
+	}
+
+	if( novis ) {
+		R_SetupPVSFromCluster( -1, -1 );
+	} else {
+		R_SetupPVSFromCluster( l->cluster, l->area );
+	}
+
+	cascades = l->shadowCascades;
+	if( compile ) {
+		cascades = 1;
+	}
+
+	for( i = 0; i < cascades; i++ ) {
+		float *ob = l->splitOrtho[i];
+
+		fd->x = x + border;
+		fd->y = y + border;
+		Vector4Set( rnp->viewport, fd->x, -fd->y + target->upload_height - fd->height, fd->width, fd->height );
+		Vector4Set( rnp->scissor, x, -y + target->upload_height - size, size, size );
+
+		memcpy( rn.frustum, l->frustum, sizeof( cplane_t ) * 6 );
+
+		Matrix4_Copy( l->projectionMatrix, l->splitProjectionMatrix[i] );
+
+		if( cascades > 1 || ( cascades == 1 && ob[6] == 1.0f ) ) {
+			Matrix4_OrthoProjection( ob[0], ob[1], ob[2], ob[3], -ob[5], -ob[4], crop );
+			crop[10] = 1.0f / (ob[5] - ob[4]);
+			crop[14] = -ob[4] * crop[10];
+
+			Matrix4_Multiply( crop, l->projectionMatrix, l->splitProjectionMatrix[i] );
+			l->splitProjectionMatrix[i][12] = (floor(l->splitProjectionMatrix[i][12] / fract)) * fract;
+			l->splitProjectionMatrix[i][13] = (floor(l->splitProjectionMatrix[i][13] / fract)) * fract;
+
+			// offset the far clip distance to tightly enclose the split bounds
+			rn.frustum[5].dist += ob[7];
+		}
+
+		R_SetCameraAndProjectionMatrices( l->worldToLightMatrix, l->splitProjectionMatrix[i] );
+
+		R_RenderView( fd );
+
+		if( compile && l->world ) {
+			compile = false;
+			R_CompileLightSideView( l, 0 );
+		}
+
+		x += size;
+	}
+}
+
+/*
+* R_DrawRtLightShadow
+*/
+static void R_DrawRtLightShadow( rtlight_t *l, image_t *target, int sideMask, bool compile, bool novis, refinst_t *prevrn ) {
+	int x, y, size, border;
+	int side;
+	refdef_t *fd;
+	refinst_t *rnp = &rn;
+
+	if( !l->shadow ) {
+		return;
+	}
+
+	size = l->shadowSize;
+	border = l->shadowBorder;
+	x = l->shadowOffset[0];
+	y = l->shadowOffset[1];
+
+	rnp->renderTarget = target->fbo;
+	rnp->nearClip = r_shadows_nearclip->value;
+	rnp->farClip = l->radius;
+	rnp->clipFlags = 63; // clip by near and far planes too
+	rnp->meshlist = &r_shadowlist;
+	rnp->portalmasklist = &r_shadowportallist;
+	rnp->parent = prevrn;
+	rnp->lodBias = r_shadows_lodbias->integer;
+	rnp->lodScale = 1;
+	rnp->numDepthPortalSurfaces = 0;
+	rnp->numRtLightEntities = l->numShadowEnts;
+	rnp->rtLightEntities = l->shadowEnts;
+	rnp->rtLightSurfaceInfo = l->surfaceInfo;
+	rnp->numRtLightVisLeafs = l->numVisLeafs;
+	rnp->rtLightVisLeafs = l->visLeafs;
+	VectorCopy( l->origin, rnp->lodOrigin );
+	VectorCopy( l->origin, rnp->pvsOrigin );
+
+	if( l->sky ) {
+		rnp->polygonFactor = r_shadows_sky_polygonoffset_factor->value;
+		rnp->polygonUnits = r_shadows_sky_polygonoffset_units->value;
+	} else {
+		rnp->polygonFactor = r_shadows_polygonoffset_factor->value;
+		rnp->polygonUnits = r_shadows_polygonoffset_units->value;
+	}
+
+	if( l->directional ) {
+		R_DrawRtLightOrthoShadow( rnp, l, target, sideMask, compile, novis, prevrn );
+		return;
+	}
+
+	fd = &rnp->refdef;
+	fd->rdflags = 0;
+	VectorCopy( l->origin, fd->vieworg );
+	Matrix3_Copy( l->axis, fd->viewaxis );
+	fd->fov_x = fd->fov_y = RAD2DEG( 2 * atan2( size, ((float)size - border) ) );
+	fd->width = size;
+	fd->height = size;
+
+	// ignore current frame's area vis when compiling shadow geometry
+	if( compile ) {
+		fd->areabits = NULL;
+	}
+
+	if( prevrn != NULL && !compile ) {
+		unsigned i;
+		cplane_t deformedFrustum[6];
+		int numDeformedFrustumPlanes;
+
+		// generate a deformed frustum that includes the light origin, this is
+		// used to cull shadow casting surfaces that can not possibly cast a
+		// shadow onto the visible light-receiving surfaces, which can be a
+		// performance gain
+		numDeformedFrustumPlanes = R_DeformFrustum( prevrn->frustum, prevrn->frustumCorners, 
+			prevrn->viewOrigin, l->origin, deformedFrustum );
+
+		// cull entities by the deformed frustum
+		rnp->numRtLightEntities = 0;
+		rnp->rtLightEntities = R_FrameCache_Alloc( sizeof( *(rnp->rtLightEntities) ) * l->numShadowEnts );
+
+		for( i = 0; i < l->numShadowEnts; i++ ) {
+			int entNum = l->shadowEnts[i];
+			entSceneCache_t *cache = R_ENTNUMCACHE( entNum );
+			if( !R_CullBoxCustomPlanes( deformedFrustum, numDeformedFrustumPlanes, cache->absmins, cache->absmaxs, 0x3F ) ) {
+				rnp->rtLightEntities[rnp->numRtLightEntities++] = entNum;
+			}
+		}
+
+		rnp->numRtLightVisLeafs = 0;
+		rnp->rtLightVisLeafs = R_FrameCache_Alloc( sizeof( *(rnp->rtLightVisLeafs) ) * l->numVisLeafs );
+
+		for( i = 0; i < l->numVisLeafs; i++ ) {
+			int leafNum = l->visLeafs[i];
+			const mleaf_t *leaf = rsh.worldBrushModel->leafs + leafNum;
+			if( !R_CullBoxCustomPlanes( deformedFrustum, numDeformedFrustumPlanes, leaf->mins, leaf->maxs, 0x3F ) ) {
+				rnp->rtLightVisLeafs[rnp->numRtLightVisLeafs++] = leafNum;
+			}
+		}
+
+#if 0
+		if( 0 ) {
+			unsigned j;
+			unsigned dscount, scount;
+			unsigned *pin, *pout;
+
+			pin = l->surfaceInfo;
+			dscount = *pin;
+			scount = l->numSurfaces;
+
+			pout = R_FrameCache_Alloc( sizeof( unsigned ) * (1 + dscount*2 + scount*3) );
+			rnp->rtLightSurfaceInfo = pout;
+
+			*pout = *pin;
+			pout++, pin++;
+
+			for( i = 0; i < dscount; i++ ) {
+				unsigned ds = *pin++;
+				unsigned numSurfaces = *pin++;
+
+				*pout++ = ds;
+				*pout++ = numSurfaces;
+
+				for( j = 0; j < numSurfaces; j++, pin += 3, pout += 3 ) {
+					const msurface_t *surf = rsh.worldBrushModel->surfaces + pin[0];
+
+					pout[0] = pin[0], pout[1] = pin[1];
+					if( !R_CullBoxCustomPlanes( deformedFrustum, numDeformedFrustumPlanes, surf->mins, surf->maxs, 0x3F ) ) {
+						pout[2] = pin[2];
+					} else {
+						pout[2] = 0;
+					}
+				}
+			}
+		}
+#endif
+	}
+
+	if( novis ) {
+		R_SetupPVSFromCluster( -1, -1 );
+	} else {
+		R_SetupPVSFromCluster( l->cluster, l->area );
+	}
+
+	sideMask &= 0x3F;
+	for( side = 0; side < 6; side++ ) {
+		if( !(sideMask & (1<<side)) ) {
 			continue;
 		}
-		shadowBits &= ~group->bit;
 
-		// make sure we don't render the same shadowmap twice in the same scene frame
-		if( rsc.renderedShadowBits & group->bit ) {
+		rnp->rtLight = l;
+		rnp->rtLightSide = side;
+
+		rnp->renderFlags = RF_SHADOWMAPVIEW;
+		if( (side & 1) ^ (side >> 2) ) {
+			rnp->renderFlags |= RF_FLIPFRONTFACE;
+		}
+		if( !( target->flags & IT_DEPTH ) ) {
+			rnp->renderFlags |= RF_SHADOWMAPVIEW_RGB;
+		}
+		if( compile ) {
+			rnp->renderFlags |= RF_NOENTS;
+		}
+
+		fd->x = x + (side & 1) * size;
+		fd->y = y + (side >> 1) * size;
+		Vector4Set( rnp->viewport, fd->x, -fd->y + target->upload_height - fd->height, fd->width, fd->height );
+		Vector4Set( rnp->scissor, fd->x, -fd->y + target->upload_height - fd->height, fd->width, fd->height );
+
+		R_SetupSideViewMatrices( fd, side );
+
+		R_SetupSideViewFrustum( fd, side, rnp->nearClip, rnp->farClip, rnp->frustum, rn.frustumCorners );
+
+		R_RenderView( fd );
+
+		if( compile && l->world ) {
+			R_CompileLightSideView( l, side );
+		}
+	}
+}
+
+/*
+* R_CompileRtLightShadow
+*/
+void R_CompileRtLightShadow( rtlight_t *l ) {
+	image_t *atlas;
+	refinst_t *prevrn;
+
+	if( !l->world || !l->shadow ) {
+		return;
+	}
+	if( !r_lighting_realtime_world->integer || !r_lighting_realtime_world_shadows->integer ) {
+		return;
+	}
+
+	if( l->compiledSurf[0] ) {
+		return;
+	}
+
+	atlas = R_GetShadowmapAtlasTexture();
+	if( !atlas || !atlas->fbo || atlas->error != GL_NO_ERROR ) {
+		return;
+	}
+
+	l->shadowSize = SHADOWMAP_MIN_SIZE;
+	l->shadowBorder = SHADOWMAP_MIN_BORDER;
+	l->shadowOffset[0] = 0;
+	l->shadowOffset[1] = 0;
+
+	prevrn = R_PushRefInst();
+
+	R_DrawRtLightShadow( l, atlas, 0x3F, true, false, prevrn );
+
+	R_PopRefInst();
+}
+
+/*
+* R_UncompileRtLightShadow
+*/
+void R_UncompileRtLightShadow( rtlight_t *l ) {
+	int side;
+	shadowSurfBatch_t *b, *next;
+
+	assert( l != NULL );
+	if( !l ) {
+		return;
+	}
+
+	if( !l->compiledSurf[0] ) {
+		return;
+	}
+
+	for( side = 0; side < 6; side++ ) {
+		for( b = l->compiledSurf[side]; b; b = next ) {
+			mesh_vbo_t *ebo;
+
+			next = b->next;
+			ebo = R_GetVBOByIndex( b->elemsVbo );
+
+			if( ebo ) {
+				R_ReleaseMeshVBO( ebo );
+			}
+			R_Free( b );
+		}
+	}
+
+	memset( l->compiledSurf, 0, sizeof( l->compiledSurf ) );
+}
+
+/*
+* R_CullRtLightFrumSides
+*
+* Based on R_Shadow_CullFrustumSides from Darkplaces, by Forest "LordHavoc" Hale
+*/
+static int R_CullRtLightFrumSides( const refinst_t *r, const rtlight_t *l, float size, float border ) {
+	int i;
+	int sides = 0x3F;
+	vec3_t n;
+	float scale = (size - 2*border) / size, len;
+
+	if( l->directional ) {
+		return 1;
+	}
+
+	// check if cone enclosing side would cross frustum plane
+	scale = 2 / ( scale * scale + 2 );
+
+	for( i = 0; i < 5; i++ ) {
+		Matrix4_Multiply_Vector3( l->worldToLightMatrix, r->frustum[i].normal, n );
+		if( PlaneDiff( l->origin, &r->frustum[i] ) > -ON_EPSILON ) {
 			continue;
 		}
 
-		// calculate LOD for shadowmap
-		dist = DistanceFast( group->origin, lodOrigin );
-		lod = (int)( dist * lodScale ) / group->projDist - SHADOWMAP_LODBIAS;
-		if( lod < 0 ) {
+		len = scale;
+		if( n[0]*n[0] > len ) sides &= n[0] < 0 ? ~(1<<0) : ~(2 << 0);
+		if( n[1]*n[1] > len ) sides &= n[1] < 0 ? ~(1<<2) : ~(2 << 2);
+		if( n[2]*n[2] > len ) sides &= n[2] < 0 ? ~(1<<4) : ~(2 << 4);
+	}
+
+	if( PlaneDiff( l->origin, &r->frustum[4] ) >= r->farClip - r->nearClip + ON_EPSILON ) {
+		Matrix4_Multiply_Vector3( l->worldToLightMatrix, r->frustum[4].normal, n );
+
+		len = scale;
+		if( n[0]*n[0] > len ) sides &= n[0] >= 0 ? ~(1<<0) : ~(2 << 0);
+		if( n[1]*n[1] > len ) sides &= n[1] >= 0 ? ~(1<<2) : ~(2 << 2);
+		if( n[2]*n[2] > len ) sides &= n[2] >= 0 ? ~(1<<4) : ~(2 << 4);
+	}
+
+	return sides;
+}
+
+/*
+* R_DrawShadows
+*/
+void R_DrawShadows( void ) {
+	unsigned i;
+	rtlight_t *l;
+	image_t *atlas;
+	lightmapAllocState_t *salloc = &shadowAtlasAlloc;
+	unsigned numRtLights;
+	rtlight_t **rtLights;
+	int border = max( r_shadows_bordersize->integer, SHADOWMAP_MIN_BORDER );
+	refinst_t *prevrn;
+
+	if( rn.renderFlags & (RF_LIGHTVIEW|RF_SHADOWMAPVIEW) ) {
+		return;
+	}
+
+	if( !r_lighting_realtime_world->integer && !r_lighting_realtime_dlight->integer ) {
+		return;
+	}
+	if( !r_lighting_realtime_world_shadows->integer && !r_lighting_realtime_dlight_shadows->integer ) {
+		return;
+	}
+
+	rtLights = rn.rtlights;
+	numRtLights = rn.numRealtimeLights;
+
+	if( !numRtLights ) {
+		return;
+	}
+
+	atlas = R_GetShadowmapAtlasTexture();
+	if( !atlas || !atlas->fbo || atlas->error != GL_NO_ERROR ) {
+		return;
+	}
+
+	if( atlas->upload_width != salloc->width || atlas->upload_height != salloc->height ) {
+		R_AllocLightmap_Free( salloc );
+	}
+
+	if( salloc->width ) {
+		R_AllocLightmap_Reset( salloc );
+	} else {
+		R_AllocLightmap_Init( salloc, atlas->upload_width, atlas->upload_height );
+	}
+
+	prevrn = R_PushRefInst();
+	if( !prevrn ) {
+		return;
+	}
+
+	for( i = 0; i < numRtLights; i++ ) {
+		int x, y;
+		int size, width, height;
+		int sideMask;
+		int lod;
+		bool haveBlock;
+		int minsize, maxsize;
+
+		l = rtLights[i];
+
+		if( !l->shadow ) {
+			continue;
+		}
+
+		sideMask = l->casterMask;
+		sideMask &= l->receiverMask;
+		if( !sideMask ) {
+			continue;
+		}
+
+		if( l->world ) {
+			if( !r_lighting_realtime_world_shadows->integer ) {
+				continue;
+			}
+		} else {
+			if( !r_lighting_realtime_dlight_shadows->integer ) {
+				continue;
+			}
+		}
+
+		if( l->directional ) {
+			R_ComputeShadowCascades( prevrn, l, border );
+			if( l->shadowCascades == 0 ) {
+				continue;
+			}
+		}
+
+		if( l->cascaded ) {
 			lod = 0;
+			minsize = r_shadows_cascades_minsize->integer;
+			maxsize = r_shadows_cascades_maxsize->integer;
+		} else {
+			lod = l->lod;
+			minsize = r_shadows_minsize->integer;
+			maxsize = r_shadows_maxsize->integer;
 		}
 
-		// allocate/resize the texture if needed
-		shadowmap = R_GetShadowmapTexture( i, rsc.refdef.width, rsc.refdef.height, 0 );
+		clamp_low( minsize, SHADOWMAP_MIN_SIZE );
+		Q_clamp( maxsize, minsize + 2, atlas->width );
 
-		assert( shadowmap && shadowmap->upload_width && shadowmap->upload_height );
+		size = l->radius * r_shadows_precision->value / (lod + 1.0);
+		size = Q_bound( minsize, size, maxsize );
+		
+		x = y = 0;
+		haveBlock = false;
+		while( !haveBlock && size >= minsize ) {
+			if( l->directional ) {
+				width = size * l->shadowCascades;
+				height = size;
+			} else {
+				width = size * 2;
+				height = size * 3;
+			}
 
-		group->shadowmap = shadowmap;
-		textureWidth = shadowmap->upload_width;
-		textureHeight = shadowmap->upload_height;
+			haveBlock = R_AllocLightmap_Block( salloc, width, height, &x, &y );
+			if( haveBlock ) {
+				break;
+			}
+			size >>= 1;
+		}
 
-		if( !shadowmap->fbo ) {
+		if( !haveBlock ) {
 			continue;
 		}
 
-		farClip = R_SetupShadowmapView( group, &refdef, lod );
-		if( farClip <= 0.0f ) {
+		sideMask &= R_CullRtLightFrumSides( prevrn, l, size, border );
+		if( !sideMask ) {
 			continue;
 		}
 
-		// ignore shadowmaps of very low detail level
-		if( refdef.width < SHADOWMAP_MIN_VIEWPORT_SIZE || refdef.height < SHADOWMAP_MIN_VIEWPORT_SIZE ) {
-			continue;
-		}
+		l->shadowSize = size;
+		l->shadowBorder = border;
+		l->shadowOffset[0] = x;
+		l->shadowOffset[1] = y;
 
-		rn.renderTarget = shadowmap->fbo;
-		rn.farClip = farClip;
-		rn.renderFlags = RF_SHADOWMAPVIEW | RF_FLIPFRONTFACE;
-		if( !( shadowmap->flags & IT_DEPTH ) ) {
-			rn.renderFlags |= RF_SHADOWMAPVIEW_RGB;
-		}
-		rn.clipFlags |= 16; // clip by far plane too
-		rn.meshlist = &r_shadowlist;
-		rn.portalmasklist = NULL;
-		rn.shadowGroup = group;
-		rn.lod_dist_scale_for_fov = lodScale;
-		VectorCopy( viewerOrigin, rn.pvsOrigin );
-		VectorCopy( lodOrigin, rn.lodOrigin );
-
-		// 3 pixels border on each side to prevent nasty stretching/bleeding of shadows,
-		// also accounting for smoothing done in the fragment shader
-		Vector4Set( rn.viewport, refdef.x + 3,refdef.y + textureHeight - refdef.height + 3, refdef.width - 6, refdef.height - 6 );
-		Vector4Set( rn.scissor, refdef.x, refdef.y, textureWidth, textureHeight );
-
-		R_RenderView( &refdef );
-
-		Matrix4_Copy( rn.cameraProjectionMatrix, group->cameraProjectionMatrix );
-
-		rsc.renderedShadowBits |= group->bit;
+		R_DrawRtLightShadow( l, atlas, sideMask, false, false, prevrn );
 	}
 
 	R_PopRefInst();

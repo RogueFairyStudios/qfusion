@@ -256,6 +256,9 @@ static edict_t *CopyToBodyQue( edict_t *ent, edict_t *attacker, int damage ) {
 		body->nextThink = level.time + 3000 + random() * 3000;
 		body->deadflag = DEAD_DEAD;
 	} else if( ent->s.type == ET_PLAYER ) {
+		const int deathanim[3] = { BOTH_DEAD1, BOTH_DEAD2, BOTH_DEAD3 };
+		int i = rand() % (sizeof(deathanim) / sizeof(deathanim[0]));
+
 		// copy the model
 		body->s.type = ET_CORPSE;
 		body->s.modelindex = ent->s.modelindex;
@@ -264,23 +267,8 @@ static edict_t *CopyToBodyQue( edict_t *ent, edict_t *attacker, int damage ) {
 		body->s.teleported = true;
 
 		// launch the death animation on the body
-		{
-			static int i;
-			i = ( i + 1 ) % 3;
-			G_AddEvent( body, EV_DIE, i, true );
-			switch( i ) {
-				default:
-				case 0:
-					body->s.frame = ( ( BOTH_DEAD1 & 0x3F ) | ( BOTH_DEAD1 & 0x3F ) << 6 | ( 0 & 0xF ) << 12 );
-					break;
-				case 1:
-					body->s.frame = ( ( BOTH_DEAD2 & 0x3F ) | ( BOTH_DEAD2 & 0x3F ) << 6 | ( 0 & 0xF ) << 12 );
-					break;
-				case 2:
-					body->s.frame = ( ( BOTH_DEAD3 & 0x3F ) | ( BOTH_DEAD3 & 0x3F ) << 6 | ( 0 & 0xF ) << 12 );
-					break;
-			}
-		}
+		G_AddEvent( body, EV_DIE, i, true );
+		body->s.frame = GS_EncodeAnimState( deathanim[i], deathanim[i], 0 );
 
 		body->think = body_ready;
 		body->takedamage = DAMAGE_NO;
@@ -484,6 +472,7 @@ void G_GhostClient( edict_t *ent ) {
 void G_ClientRespawn( edict_t *self, bool ghost ) {
 	int i;
 	edict_t *spawnpoint;
+	vec3_t hull_mins, hull_maxs;
 	vec3_t spawn_origin, spawn_angles;
 	gclient_t *client;
 	int old_team;
@@ -566,6 +555,13 @@ void G_ClientRespawn( edict_t *self, bool ghost ) {
 	VectorCopy( playerbox_stand_maxs, self->r.maxs );
 	VectorClear( self->velocity );
 	VectorClear( self->avelocity );
+
+	VectorCopy( self->r.mins, hull_mins );
+	VectorCopy( self->r.maxs, hull_maxs );
+	trap_CM_RoundUpToHullSize( hull_mins, hull_maxs, NULL );
+	if( self->r.maxs[2] > hull_maxs[2] ) {
+		self->viewheight -= ( self->r.maxs[2] - hull_maxs[2] );
+	}
 
 	client->ps.POVnum = ENTNUM( self );
 
@@ -866,9 +862,6 @@ static void G_SetName( edict_t *ent, const char *original_name ) {
 	}
 
 	maxchars = MAX_NAME_CHARS;
-	if( ent->r.client->isTV ) {
-		maxchars = min( maxchars + 10, MAX_NAME_BYTES - 1 );
-	}
 
 	// Limit the name to MAX_NAME_CHARS printable characters
 	// (non-ascii utf-8 sequences are currently counted as 2 or more each, sorry)
@@ -1104,7 +1097,7 @@ void ClientUserinfoChanged( edict_t *ent, char *userinfo ) {
 	// set name, it's validated and possibly changed first
 	Q_strncpyz( oldname, cl->netname, sizeof( oldname ) );
 	G_SetName( ent, Info_ValueForKey( userinfo, "name" ) );
-	if( oldname[0] && Q_stricmp( oldname, cl->netname ) && !cl->isTV && !CheckFlood( ent, false ) ) {
+	if( oldname[0] && Q_stricmp( oldname, cl->netname ) && !CheckFlood( ent, false ) ) {
 		G_PrintMsg( NULL, "%s%s is now known as %s%s\n", oldname, S_COLOR_WHITE, cl->netname, S_COLOR_WHITE );
 	}
 	if( !Info_SetValueForKey( userinfo, "name", cl->netname ) ) {
@@ -1120,7 +1113,7 @@ void ClientUserinfoChanged( edict_t *ent, char *userinfo ) {
 	if( !s ) {
 		cl->hand = 2;
 	} else {
-		cl->hand = bound( atoi( s ), 0, 2 );
+		cl->hand = Q_bound( atoi( s ), 0, 2 );
 	}
 
 	// handicap
@@ -1138,7 +1131,7 @@ void ClientUserinfoChanged( edict_t *ent, char *userinfo ) {
 
 	s = Info_ValueForKey( userinfo, "cg_movementStyle" );
 	if( s ) {
-		i = bound( atoi( s ), 0, GS_MAXBUNNIES - 1 );
+		i = Q_bound( atoi( s ), 0, GS_MAXBUNNIES - 1 );
 		if( trap_GetClientState( PLAYERNUM( ent ) ) < CS_SPAWNED ) {
 			if( i != cl->movestyle ) {
 				cl->movestyle = cl->movestyle_latched = i;
@@ -1195,24 +1188,6 @@ void ClientUserinfoChanged( edict_t *ent, char *userinfo ) {
 	s = Info_ValueForKey( userinfo, "mmflags" );
 	cl->mmflags = ( s == NULL ) ? 0 : strtoul( s, NULL, 10 );
 
-	// tv
-	if( cl->isTV ) {
-		s = Info_ValueForKey( userinfo, "tv_port" );
-		cl->tv.port = s ? atoi( s ) : 0;
-
-		s = Info_ValueForKey( userinfo, "tv_port6" );
-		cl->tv.port6 = s ? atoi( s ) : 0;
-
-		s = Info_ValueForKey( userinfo, "max_cl" );
-		cl->tv.maxclients = s ? atoi( s ) : 0;
-
-		s = Info_ValueForKey( userinfo, "num_cl" );
-		cl->tv.numclients = s ? atoi( s ) : 0;
-
-		s = Info_ValueForKey( userinfo, "chan" );
-		cl->tv.channel = s ? atoi( s ) : 0;
-	}
-
 	if( !G_ISGHOSTING( ent ) && trap_GetClientState( PLAYERNUM( ent ) ) >= CS_SPAWNED ) {
 		G_Client_AssignTeamSkin( ent, userinfo );
 	}
@@ -1236,7 +1211,7 @@ void ClientUserinfoChanged( edict_t *ent, char *userinfo ) {
 * Changing levels will NOT cause this to be called again, but
 * loadgames will.
 */
-bool ClientConnect( edict_t *ent, char *userinfo, bool fakeClient, bool tvClient ) {
+bool ClientConnect( edict_t *ent, char *userinfo, bool fakeClient ) {
 	char *value;
 
 	assert( ent );
@@ -1297,7 +1272,6 @@ bool ClientConnect( edict_t *ent, char *userinfo, bool fakeClient, bool tvClient
 	memset( ent->r.client, 0, sizeof( gclient_t ) );
 	ent->r.client->ps.playerNum = PLAYERNUM( ent );
 	ent->r.client->connecting = true;
-	ent->r.client->isTV = tvClient == true;
 	ent->r.client->team = TEAM_SPECTATOR;
 	G_Client_UpdateActivity( ent->r.client ); // activity detected
 
@@ -1372,72 +1346,6 @@ void ClientDisconnect( edict_t *ent, const char *reason ) {
 	GClip_UnlinkEntity( ent );
 
 	G_Match_CheckReadys();
-}
-
-/*
-* G_MoveClientToTV
-*
-* Sends cmd to connect to a non-full TV server with round robin balancing
-*/
-void G_MoveClientToTV( edict_t *ent ) {
-	int i;
-	gclient_t *client, *best;
-	static int last_tv = 0;
-	bool isIPv6;
-	char ip[MAX_INFO_VALUE];
-	int port;
-	const char *p;
-
-	if( !ent->r.client ) {
-		return;
-	}
-	if( ent->r.svflags & SVF_FAKECLIENT ) {
-		return;
-	}
-	if( ent->r.client->isTV ) {
-		return;
-	}
-
-	best = NULL;
-	for( i = 0; i < gs.maxclients; i++ ) {
-		client = &game.clients[( last_tv + 1 + i ) % gs.maxclients];
-		if( !client->isTV || client->connecting ) {
-			// not a TV or not ready yet
-			continue;
-		}
-		if( client->tv.numclients == client->tv.maxclients ) {
-			// full
-			continue;
-		}
-		if( !client->tv.channel ) {
-			// invalid userinfo/channel number
-			continue;
-		}
-		best = client;
-		break;
-	}
-
-	if( !best ) {
-		G_PrintMsg( ent, "Could not find a free TV server\n" );
-		return;
-	}
-
-	Q_strncpyz( ip, best->ip, sizeof( ip ) );
-
-	// check IP type
-	p = strstr( ip, "::" );
-	isIPv6 = p != NULL;
-
-	// strip port number from address string
-	p = strrchr( ip, ':' );
-	if( p != NULL ) {
-		ip[p - ip] = '\0';
-	}
-
-	port = isIPv6 ? best->tv.port6 : best->tv.port;
-
-	last_tv = best - game.clients;
-	trap_GameCmd( ent, va( "memo tv_moveto \"%s\" %s:%hu#%i", COM_RemoveColorTokens( best->netname ), ip, port, best->tv.channel ) );
 }
 
 //==============================================================
@@ -1529,17 +1437,6 @@ static void ClientMakePlrkeys( gclient_t *client, usercmd_t *ucmd ) {
 }
 
 /*
-* ClientMultiviewChanged
-* This will be called when client tries to change multiview mode
-* Mode change can be disallowed by returning false
-*/
-bool ClientMultiviewChanged( edict_t *ent, bool multiview ) {
-	ent->r.client->multiview = multiview == true;
-
-	return true;
-}
-
-/*
 * ClientThink
 */
 void ClientThink( edict_t *ent, usercmd_t *ucmd, int timeDelta ) {
@@ -1563,7 +1460,7 @@ void ClientThink( edict_t *ent, usercmd_t *ucmd, int timeDelta ) {
 		// add smoothing to timeDelta between the last few ucmds and a small fine-tuning nudge.
 		nudge = fixedNudge + g_antilag_timenudge->integer;
 		timeDelta += nudge;
-		clamp( timeDelta, -g_antilag_maxtimedelta->integer, 0 );
+		Q_clamp( timeDelta, -g_antilag_maxtimedelta->integer, 0 );
 
 		// smooth using last valid deltas
 		i = client->timeDeltasHead - 6;
@@ -1592,7 +1489,7 @@ void ClientThink( edict_t *ent, usercmd_t *ucmd, int timeDelta ) {
 #endif
 	}
 
-	clamp( client->timeDelta, -g_antilag_maxtimedelta->integer, 0 );
+	Q_clamp( client->timeDelta, -g_antilag_maxtimedelta->integer, 0 );
 
 	// update activity if he touched any controls
 	if( ucmd->forwardmove != 0 || ucmd->sidemove != 0 || ucmd->upmove != 0 || ( ucmd->buttons & ~BUTTON_BUSYICON ) != 0
@@ -1620,7 +1517,7 @@ void ClientThink( edict_t *ent, usercmd_t *ucmd, int timeDelta ) {
 		client->ps.pmove.pm_type = PM_FREEZE;
 	} else if( ent->s.type == ET_GIB ) {
 		client->ps.pmove.pm_type = PM_GIB;
-	} else if( ent->movetype == MOVETYPE_NOCLIP || client->isTV ) {
+	} else if( ent->movetype == MOVETYPE_NOCLIP ) {
 		client->ps.pmove.pm_type = PM_SPECTATOR;
 	} else {
 		client->ps.pmove.pm_type = PM_NORMAL;
@@ -1628,14 +1525,13 @@ void ClientThink( edict_t *ent, usercmd_t *ucmd, int timeDelta ) {
 
 	// set up for pmove
 	memset( &pm, 0, sizeof( pmove_t ) );
-	pm.playerState = &client->ps;
-
-	if( !client->isTV ) {
-		pm.cmd = *ucmd;
-	}
 
 	// perform a pmove
-	Pmove( &pm );
+	PM_Pmove( &pm, &client->ps, ucmd, &G_asCallPMoveGetViewAnglesClamp, &G_asCallPMovePMove );
+
+	// in case some trigger action has moved the view angles (like teleporter)
+	for( i = 0; i < 3; i++ )
+		client->ps.pmove.delta_angles[i] = ANGLE2SHORT( client->ps.viewangles[i] ) - ucmd->angles[i];
 
 	// save results of pmove
 	client->old_pmove = client->ps.pmove;
@@ -1743,13 +1639,13 @@ void G_ClientThink( edict_t *ent ) {
 		if( ent->s.team >= TEAM_PLAYERS && ent->s.team < GS_MAX_TEAMS ) {
 			if( ent->r.client->ps.inventory[POWERUP_SHELL] > 0 ) {
 				ent->r.client->resp.instashieldCharge -= ( game.frametime * 0.001f ) * 60.0f;
-				clamp( ent->r.client->resp.instashieldCharge, 0, INSTA_SHIELD_MAX );
+				Q_clamp( ent->r.client->resp.instashieldCharge, 0, INSTA_SHIELD_MAX );
 				if( ent->r.client->resp.instashieldCharge == 0 ) {
 					ent->r.client->ps.inventory[POWERUP_SHELL] = 0;
 				}
 			} else {
 				ent->r.client->resp.instashieldCharge += ( game.frametime * 0.001f ) * 20.0f;
-				clamp( ent->r.client->resp.instashieldCharge, 0, INSTA_SHIELD_MAX );
+				Q_clamp( ent->r.client->resp.instashieldCharge, 0, INSTA_SHIELD_MAX );
 			}
 		}
 	}

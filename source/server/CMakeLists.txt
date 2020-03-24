@@ -1,29 +1,30 @@
 project(${QFUSION_SERVER_NAME})
 
-include_directories(${ZLIB_INCLUDE_DIR} ${CURL_INCLUDE_DIR})
+include_directories(${MINIZ_INCLUDE_DIR} ${CURL_INCLUDE_DIR})
 
 file(GLOB SERVER_HEADERS
     "*.h"
-	"../gameshared/q_*.h"
-	"../gameshared/anorms.h"
-	"../gameshared/config.h"	
-	"../qcommon/*.h"
-	"../qalgo/*.h"
-	"../matchmaker/*.h"
-	"../angelwrap/qas_public.h"
-	"../game/g_public.h"
-	"../server/*.h"
+    "../gameshared/q_*.h"
+    "../gameshared/anorms.h"
+    "../gameshared/config.h"	
+    "../qcommon/*.h"
+    "../qalgo/*.h"
+    "../matchmaker/*.h"
+    "../angelwrap/qas_public.h"
+    "../game/g_public.h"
+    "../server/*.h"
+    "${MINIZ_INCLUDE_DIR}/miniz.h"
 )
 
 file(GLOB SERVER_SOURCES
-	"../qcommon/asyncstream.c"
-	"../qcommon/autoupdate.c"	
+    "../qcommon/asyncstream.c"
+    "../qcommon/autoupdate.c"	
     "../qcommon/cm_main.c"
-	"../qcommon/cm_q1bsp.c"
-	"../qcommon/cm_q2bsp.c"
+    "../qcommon/cm_q1bsp.c"
+    "../qcommon/cm_q2bsp.c"
     "../qcommon/cm_q3bsp.c"
     "../qcommon/cm_trace.c"
-	"../qcommon/compression.c"	
+    "../qcommon/compression.c"	
     "../qcommon/bsp.c"
     "../qcommon/patch.c"
     "../qcommon/common.c"
@@ -51,9 +52,10 @@ file(GLOB SERVER_SOURCES
     "../gameshared/q_*.c"
     "../qalgo/*.c"
     "../matchmaker/mm_*.c"
+    "${MINIZ_SOURCE_DIR}/miniz.c"
 )
 
-if (${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+if (WIN32)
     file(GLOB SERVER_PLATFORM_SOURCES 
         "../win32/win_fs.c"
         "../win32/win_net.c"
@@ -66,7 +68,7 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Windows")
         "../win32/conproc.c"
     )
 
-    set(SERVER_PLATFORM_LIBRARIES "ws2_32.lib" "winmm.lib")
+    set(SERVER_PLATFORM_LIBRARIES ws2_32.lib winmm.lib)
     set(SERVER_BINARY_TYPE WIN32)
 else()
     file(GLOB SERVER_PLATFORM_SOURCES 
@@ -80,13 +82,18 @@ else()
         "../null/sys_vfs_null.c"
     )
 
-    set(SERVER_PLATFORM_LIBRARIES "pthread" "dl" "m")
+    if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+        set(SERVER_PLATFORM_LIBRARIES pthread dl m)
+    else()
+        set(SERVER_PLATFORM_LIBRARIES pthread m)
+    endif()
+
     set(SERVER_BINARY_TYPE "")
 endif()
 
 add_executable(${QFUSION_SERVER_NAME} ${SERVER_BINARY_TYPE} ${SERVER_HEADERS} ${SERVER_SOURCES} ${SERVER_PLATFORM_SOURCES})
 add_dependencies(${QFUSION_SERVER_NAME} angelwrap game)
-target_link_libraries(${QFUSION_SERVER_NAME} PRIVATE ${CURL_LIBRARY} ${ZLIB_LIBRARY} ${SERVER_PLATFORM_LIBRARIES})
+target_link_libraries(${QFUSION_SERVER_NAME} PRIVATE ${CURL_LIBRARY} ${SERVER_PLATFORM_LIBRARIES})
 qf_set_output_dir(${QFUSION_SERVER_NAME} "")
 
-set_target_properties(${QFUSION_SERVER_NAME} PROPERTIES COMPILE_DEFINITIONS "DEDICATED_ONLY")
+set_target_properties(${QFUSION_SERVER_NAME} PROPERTIES COMPILE_DEFINITIONS "DEDICATED_ONLY;MINIZ_NO_STDIO;MINIZ_NO_ARCHIVE_APIS;MINIZ_NO_ARCHIVE_WRITING_APIS")

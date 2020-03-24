@@ -128,16 +128,9 @@ static void SNAP_DemoMetaDataMessage( msg_t *msg, const char *meta_data, size_t 
 * SNAP_RecordDemoMetaDataMessage
 */
 static void SNAP_RecordDemoMetaDataMessage( int demofile, msg_t *msg ) {
-	int complevel;
-
 	FS_Flush( demofile );
 
-	complevel = FS_GetCompressionLevel( demofile );
-	FS_SetCompressionLevel( demofile, 0 );
-
 	DEMO_SAFEWRITE( demofile, msg, true );
-
-	FS_SetCompressionLevel( demofile, complevel );
 
 	FS_Flush( demofile );
 }
@@ -205,7 +198,7 @@ void SNAP_BeginDemoRecording( int demofile, unsigned int spawncount, unsigned in
 
 	for( i = 0; i < MAX_EDICTS; i++ ) {
 		base = &baselines[i];
-		if( base->modelindex || base->sound || base->effects ) {
+		if( base->number ) {
 			MSG_WriteUint8( &msg, svc_spawnbaseline );
 			MSG_WriteDeltaEntity( &msg, &nullstate, base, true );
 
@@ -317,50 +310,18 @@ void SNAP_StopDemoRecording( int demofile ) {
 * SNAP_WriteDemoMetaData
 */
 void SNAP_WriteDemoMetaData( const char *filename, const char *meta_data, size_t meta_data_realsize ) {
-	unsigned i;
-	unsigned v;
-	char tmpn[256];
-	int filenum, filelen;
+	int filenum;
 	msg_t msg;
 	uint8_t msg_buffer[MAX_MSGLEN];
-	void *compressed_msg;
 
 	MSG_Init( &msg, msg_buffer, sizeof( msg_buffer ) );
 
-	// write to a temp file
-	v = 0;
-	for( i = 0; filename[i]; i++ ) {
-		v = ( v + i ) * 37 + tolower( filename[i] ); // case insensitivity
-	}
-	Q_snprintfz( tmpn, sizeof( tmpn ), "%u.tmp", v );
-
-	if( FS_FOpenFile( tmpn, &filenum, FS_WRITE | SNAP_DEMO_GZ ) == -1 ) {
-		return;
-	}
-
 	SNAP_DemoMetaDataMessage( &msg, meta_data, meta_data_realsize );
-	SNAP_RecordDemoMetaDataMessage( filenum, &msg );
 
-	// now open the original file in update mode and overwrite metadata
-
-	// important note: we need to the load the temp file before closing it
-	// because in the case of gz compression, closing the file may actually
-	// write some data we don't want to copy
-	filelen = FS_LoadFile( tmpn, &compressed_msg, NULL, 0 );
-
-	if( compressed_msg ) {
-		int origfile;
-
-		if( FS_FOpenFile( filename, &origfile, FS_READ | FS_UPDATE ) != -1 ) {
-			FS_Write( compressed_msg, filelen, origfile );
-			FS_FCloseFile( origfile );
-		}
-		FS_FreeFile( compressed_msg );
+	if( FS_FOpenFile( filename, &filenum, FS_READ | FS_UPDATE ) != -1 ) {
+		SNAP_RecordDemoMetaDataMessage( filenum, &msg );
+		FS_FCloseFile( filenum );
 	}
-
-	FS_FCloseFile( filenum );
-
-	FS_RemoveFile( tmpn );
 }
 
 /*

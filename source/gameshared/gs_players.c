@@ -30,7 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #define MOVEDIREPSILON  0.3f
 #define WALKEPSILON 5.0f
-#define RUNEPSILON  220.0f
+#define RUNEPSILON  100.0f
 
 // movement flags for animation control
 #define ANIMMOVE_FRONT      0x00000001  //	Player is pressing fordward
@@ -187,7 +187,7 @@ int GS_UpdateBaseAnims( entity_state_t *state, vec3_t velocity ) {
 	trace_t trace;
 
 	if( !state ) {
-		module_Error( "GS_UpdateBaseAnims: NULL state\n" );
+		gs.api.Error( "GS_UpdateBaseAnims: NULL state\n" );
 		return 0;
 	}
 
@@ -201,7 +201,7 @@ int GS_UpdateBaseAnims( entity_state_t *state, vec3_t velocity ) {
 	point[0] = state->origin[0];
 	point[1] = state->origin[1];
 	point[2] = state->origin[2] - ( 1.6 * STEPSIZE );
-	module_Trace( &trace, state->origin, mins, maxs, point, state->number, MASK_PLAYERSOLID, 0 );
+	gs.api.Trace( &trace, state->origin, mins, maxs, point, state->number, MASK_PLAYERSOLID, 0 );
 	if( trace.ent == -1 || ( trace.fraction < 1.0f && !ISWALKABLEPLANE( &trace.plane ) && !trace.startsolid ) ) {
 		pmanim.moveflags |= ANIMMOVE_AIR;
 	}
@@ -247,7 +247,7 @@ int GS_UpdateBaseAnims( entity_state_t *state, vec3_t velocity ) {
 	}
 
 	GS_SetBaseAnims( &pmanim, state->weapon );
-	return ( ( pmanim.animState[LOWER] & 0x3F ) | ( pmanim.animState[UPPER] & 0x3F ) << 6 | ( pmanim.animState[HEAD] & 0xF ) << 12 );
+	return GS_EncodeAnimState( pmanim.animState[LOWER], pmanim.animState[UPPER], pmanim.animState[HEAD] );
 }
 
 #undef MOVEDIREPSILON

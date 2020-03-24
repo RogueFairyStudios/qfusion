@@ -28,7 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 namespace WSWUI
 {
 
-using namespace Rocket::Core;
+using namespace Rml::Core;
 
 // forward-declare the instancer for keyselects
 class UI_WorldviewWidgetInstancer;
@@ -41,7 +41,7 @@ private:
 	vec3_t aWaveAmplitude;
 	vec3_t aWavePhase;
 	vec3_t aWaveFrequency;
-	float fovX;
+	float fovY;
 	float mouseSensitivity;
 	vec3_t anglesMove;
 	vec3_t anglesClamp;
@@ -69,7 +69,7 @@ public:
 
 		// Some default values
 		Matrix3_Copy( axis_identity, refdef.viewaxis );
-		fovX = 100.0f;
+		fovY = 100.0f;
 		mouseSensitivity = 0.0f;
 
 		InitLightStyles();
@@ -77,7 +77,7 @@ public:
 
 	virtual void OnRender() {
 		bool firstRender = false;
-		Rocket::Core::Dictionary parameters;
+		Rml::Core::Dictionary parameters;
 		auto *ui_main = UI_Main::Get();
 		int mousedx, mousedy;
 		vec3_t viewAngles;
@@ -86,19 +86,19 @@ public:
 
 		if( !Initialized ) {
 			// lazily register the world model
-			if( mapName.Empty() ) {
-				return;
-			}
-
 			colorCorrectionShader = NULL;
 			firstRender = true;
 			Initialized = true;
 
-			if( !colorCorrection.Empty() ) {
-				colorCorrectionShader = trap::R_RegisterLinearPic( colorCorrection.CString() );
+			if( !colorCorrection.empty() ) {
+				colorCorrectionShader = trap::R_RegisterLinearPic( colorCorrection.c_str() );
 			}
 
-			trap::R_RegisterWorldModel( mapName.CString() );
+			if( mapName.empty() ) {
+				return;
+			}
+
+			trap::R_RegisterWorldModel( mapName.c_str() );
 
 			this->DispatchEvent( "registerworldmodel", parameters, false );
 		}
@@ -106,12 +106,11 @@ public:
 		ui_main->getMouseMoveDelta( &mousedx, &mousedy );
 
 		// refdef setup
-		Rocket::Core::Vector2f box = GetBox().GetSize( Rocket::Core::Box::CONTENT );
+		Rml::Core::Vector2f box = GetBox().GetSize( Rml::Core::Box::CONTENT );
 		refdef.width = box.x;
 		refdef.height = box.y;
-		refdef.fov_x = fovX;
-		refdef.fov_y = CalcFov( refdef.fov_x, refdef.width, refdef.height );
-		AdjustFov( &refdef.fov_x, &refdef.fov_y, refdef.width, refdef.height, false );
+		refdef.fov_y = WidescreenFov( fovY );
+		refdef.fov_x = CalcHorizontalFov( refdef.fov_y, refdef.width, refdef.height );
 		refdef.time = ui_main->getRefreshState().time;
 
 		anglesMove[PITCH] += mousedy * mouseSensitivity * 0.022;
@@ -133,7 +132,7 @@ public:
 
 		AnglesToAxis( viewAngles, refdef.viewaxis );
 
-		Rocket::Core::Vector2f offset = GetAbsoluteOffset( Rocket::Core::Box::CONTENT );
+		Rml::Core::Vector2f offset = GetAbsoluteOffset( Rml::Core::Box::CONTENT );
 		refdef.x = offset.x;
 		refdef.y = offset.y;
 
@@ -159,53 +158,54 @@ public:
 		}
 	}
 
-	virtual void OnPropertyChange( const Rocket::Core::PropertyNameList& changed_properties ) {
-		Element::OnPropertyChange( changed_properties );
+	virtual void OnAttributeChange( const Rml::Core::ElementAttributes& changed_attributes ) {
+		Element::OnAttributeChange( changed_attributes );
 
-		for( Rocket::Core::PropertyNameList::const_iterator it = changed_properties.begin(); it != changed_properties.end(); ++it ) {
-			if( *it == "worldmodel" ) {
-				mapName = GetProperty( *it )->Get<String>();
-			} else if( *it == "vieworigin-x" || *it == "vieworigin-y" || *it == "vieworigin-z" ) {
-				char lastChar = ( *it )[it->Length() - 1];
-				refdef.vieworg[lastChar - 'x'] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "viewangle-pitch" ) {
-				baseAngles[PITCH] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "viewangle-yaw" ) {
-				baseAngles[YAW] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "viewangle-roll" ) {
-				baseAngles[ROLL] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "wave-pitch-amplitude" ) {
-				aWaveAmplitude[PITCH] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "wave-yaw-amplitude" ) {
-				aWaveAmplitude[YAW] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "wave-roll-amplitude" ) {
-				aWaveAmplitude[ROLL] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "wave-pitch-phase" ) {
-				aWavePhase[PITCH] = atof( GetProperty( *it )->Get<String>().CString() ) / 360.0f * M_TWOPI;
-			} else if( *it == "wave-yaw-phase" ) {
-				aWavePhase[YAW] = atof( GetProperty( *it )->Get<String>().CString() ) / 360.0f * M_TWOPI;
-			} else if( *it == "wave-roll-phase" ) {
-				aWavePhase[ROLL] = atof( GetProperty( *it )->Get<String>().CString() ) / 360.0f * M_TWOPI;
-			} else if( *it == "wave-pitch-frequency" ) {
-				aWaveFrequency[PITCH] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "wave-yaw-frequency" ) {
-				aWaveFrequency[YAW] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "wave-roll-frequency" ) {
-				aWaveFrequency[ROLL] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "fov" ) {
-				fovX = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "color-correction" ) {
-				colorCorrection = GetProperty( *it )->Get<String>();
-			} else if( *it == "mouse-sensitivity" ) {
-				mouseSensitivity = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "viewangle-pitch-clamp" ) {
-				anglesClamp[0] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "viewangle-yaw-clamp" ) {
-				anglesClamp[1] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "viewangle-roll-clamp" ) {
-				anglesClamp[2] = atof( GetProperty( *it )->Get<String>().CString() );
-			} else if( *it == "blur" ) {
-				int blur = atoi( GetProperty( *it )->Get<String>().CString() );
+		//GetAttribute< Rml::Core::String >("value", "");
+		for( Rml::Core::ElementAttributes::const_iterator it = changed_attributes.begin(); it != changed_attributes.end(); ++it ) {
+			if( it->first == "worldmodel" ) {
+				mapName = GetAttribute< Rml::Core::String >( it->first, "" );
+			} else if( it->first == "vieworigin-x" || it->first == "vieworigin-y" || it->first == "vieworigin-z" ) {
+				char lastChar = it->first.back();
+				refdef.vieworg[lastChar - 'x'] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "viewangle-pitch" ) {
+				baseAngles[PITCH] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "viewangle-yaw" ) {
+				baseAngles[YAW] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "viewangle-roll" ) {
+				baseAngles[ROLL] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "wave-pitch-amplitude" ) {
+				aWaveAmplitude[PITCH] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "wave-yaw-amplitude" ) {
+				aWaveAmplitude[YAW] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "wave-roll-amplitude" ) {
+				aWaveAmplitude[ROLL] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "wave-pitch-phase" ) {
+				aWavePhase[PITCH] = GetAttribute< float >( it->first, 0.0 ) / 360.0f * M_TWOPI;
+			} else if( it->first == "wave-yaw-phase" ) {
+				aWavePhase[YAW] = GetAttribute< float >( it->first, 0.0 ) / 360.0f * M_TWOPI;
+			} else if( it->first == "wave-roll-phase" ) {
+				aWavePhase[ROLL] = GetAttribute< float >( it->first, 0.0 ) / 360.0f * M_TWOPI;
+			} else if( it->first == "wave-pitch-frequency" ) {
+				aWaveFrequency[PITCH] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "wave-yaw-frequency" ) {
+				aWaveFrequency[YAW] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "wave-roll-frequency" ) {
+				aWaveFrequency[ROLL] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "fov" ) {
+				fovY = GetAttribute< float >( it->first, 100.0 );
+			} else if( it->first == "color-correction" ) {
+				colorCorrection = GetAttribute< Rml::Core::String >( it->first, "" );
+			} else if( it->first == "mouse-sensitivity" ) {
+				mouseSensitivity = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "viewangle-pitch-clamp" ) {
+				anglesClamp[0] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "viewangle-yaw-clamp" ) {
+				anglesClamp[1] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "viewangle-roll-clamp" ) {
+				anglesClamp[2] = GetAttribute< float >( it->first, 0.0 );
+			} else if( it->first == "blur" ) {
+				bool blur = HasAttribute( "blur ");
 				if( blur ) {
 					refdef.rdflags |= RDF_BLURRED;
 				} else {
@@ -242,7 +242,7 @@ public:
 	}
 
 	// Called for every event sent to this element or one of its descendants.
-	void ProcessEvent( Rocket::Core::Event& evt ) {
+	void ProcessEvent( Rml::Core::Event& evt ) {
 		if( evt == "invalidate" ) {
 			Initialized = false;
 		}
@@ -284,7 +284,7 @@ public:
 		for( int i = 0; i < MAX_LIGHTSTYLES; i++ ) {
 			const String &ls = lightStyles[i];
 
-			auto len = ls.Length();
+			auto len = ls.size();
 			if( len == 0 ) {
 				trap::R_AddLightStyleToScene( i, 0, 0, 0 );
 				continue;
@@ -312,59 +312,18 @@ class UI_WorldviewWidgetInstancer : public ElementInstancer
 {
 public:
 	UI_WorldviewWidgetInstancer() : ElementInstancer() {
-		StyleSheetSpecification::RegisterProperty( "vieworigin-x", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "vieworigin-y", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "vieworigin-z", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterShorthand( "vieworigin", "vieworigin-x, vieworigin-y, vieworigin-z" );
-
-		StyleSheetSpecification::RegisterProperty( "viewangle-pitch", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "viewangle-yaw", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "viewangle-roll", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterShorthand( "viewangles", "viewangle-pitch, viewangle-yaw, viewangle-roll" );
-
-		StyleSheetSpecification::RegisterProperty( "wave-pitch-amplitude", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "wave-pitch-phase", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "wave-pitch-frequency", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterShorthand( "wave-pitch", "wave-pitch-amplitude, wave-pitch-phase, wave-pitch-frequency" );
-
-		StyleSheetSpecification::RegisterProperty( "wave-yaw-amplitude", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "wave-yaw-phase", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "wave-yaw-frequency", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterShorthand( "wave-yaw", "wave-yaw-amplitude, wave-yaw-phase, wave-yaw-frequency" );
-
-		StyleSheetSpecification::RegisterProperty( "wave-roll-amplitude", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "wave-roll-phase", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "wave-roll-frequency", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterShorthand( "wave-roll", "wave-roll-amplitude, wave-roll-phase, wave-roll-frequency" );
-
-		StyleSheetSpecification::RegisterProperty( "mouse-sensitivity", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "viewangle-pitch-clamp", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "viewangle-yaw-clamp", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterProperty( "viewangle-roll-clamp", "0", false ).AddParser( "number" );
-		StyleSheetSpecification::RegisterShorthand( "viewangle-clamp", "viewangle-pitch-clamp, viewangle-yaw-clamp, viewangle-roll-clamp" );
-
-		StyleSheetSpecification::RegisterProperty( "fov", "100", false ).AddParser( "number" );
-
-		StyleSheetSpecification::RegisterProperty( "worldmodel", "", false ).AddParser( "string" );
-
-		StyleSheetSpecification::RegisterProperty( "color-correction", "", false ).AddParser( "string" );
-		StyleSheetSpecification::RegisterProperty( "blur", "", false ).AddParser( "number" );
 	}
 
 	// Rocket overrides
-	virtual Element *InstanceElement( Element *parent, const String &tag, const XMLAttributes &attr ) {
+	virtual ElementPtr InstanceElement( Element *parent, const String &tag, const XMLAttributes &attr ) override {
 		UI_WorldviewWidget *worldview = __new__( UI_WorldviewWidget )( tag );
 		UI_Main::Get()->getRocket()->registerElementDefaults( worldview );
-		return worldview;
+		return ElementPtr(worldview);
 	}
 
-	virtual void ReleaseElement( Element *element ) {
+	virtual void ReleaseElement( Element *element ) override {
 		// then delete
 		__delete__( element );
-	}
-
-	virtual void Release() {
-		__delete__( this );
 	}
 
 private:
@@ -374,8 +333,6 @@ private:
 
 ElementInstancer *GetWorldviewInstancer( void ) {
 	ElementInstancer *instancer = __new__( UI_WorldviewWidgetInstancer )();
-
-	// instancer->RemoveReference();
 	return instancer;
 }
 

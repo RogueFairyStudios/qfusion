@@ -27,7 +27,7 @@ cvar_t *cg_testEntities;
 cvar_t *cg_testLights;
 
 void CG_DrawTestLine( vec3_t start, vec3_t end ) {
-	CG_QuickPolyBeam( start, end, 6, CG_MediaShader( cgs.media.shaderLaser ) );
+	CG_QuickPolyBeam( start, end, 6, cgs.media.shaderLaser );
 }
 
 void CG_DrawTestBox( vec3_t origin, vec3_t mins, vec3_t maxs, vec3_t angles ) {
@@ -331,7 +331,7 @@ static void CG_TestLights( void ) {
 	int i, j;
 	vec3_t origin;
 
-	for( i = 0; i < min( cg_testLights->integer, 32 ); i++ ) {
+	for( i = 0; i < fmin( cg_testLights->integer, 32 ); i++ ) {
 		/*float r = 64 * ( ( i%4 ) - 1.5 );
 		float f = 64 * ( i/4 ) + 128;*/
 

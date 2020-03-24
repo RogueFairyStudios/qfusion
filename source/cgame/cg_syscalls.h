@@ -308,7 +308,7 @@ static inline void trap_R_DrawStretchPoly( const poly_t *poly, float x_offset, f
 	CGAME_IMPORT.R_DrawStretchPoly( poly, x_offset, y_offset );
 }
 
-static inline void trap_R_TransformVectorToScreen( const refdef_t *rd, const vec3_t in, vec2_t out ) {
+static inline void trap_R_TransformVectorToScreen( const refdef_t *rd, const vec3_t in, vec3_t out ) {
 	CGAME_IMPORT.R_TransformVectorToScreen( rd, in, out );
 }
 
@@ -366,6 +366,10 @@ static inline void trap_CM_TransformedBoxTrace( trace_t *tr, vec3_t start, vec3_
 
 static inline int trap_CM_TransformedPointContents( vec3_t p, struct cmodel_s *cmodel, vec3_t origin, vec3_t angles ) {
 	return CGAME_IMPORT.CM_TransformedPointContents( p, cmodel, origin, angles );
+}
+
+static inline void trap_CM_RoundUpToHullSize( vec3_t mins, vec3_t maxs, struct cmodel_s *cmodel ) {
+	CGAME_IMPORT.CM_RoundUpToHullSize( mins, maxs, cmodel );
 }
 
 static inline void trap_CM_InlineModelBounds( struct cmodel_s *cmodel, vec3_t mins, vec3_t maxs ) {
@@ -479,24 +483,32 @@ static inline size_t trap_SCR_StrlenForWidth( const char *str, struct qfontface_
 	return CGAME_IMPORT.SCR_StrlenForWidth( str, font, maxwidth, 0 );
 }
 
-static inline void trap_SCR_EnableQuickMenu( bool enable ) {
-	CGAME_IMPORT.SCR_EnableQuickMenu( enable );
-}
-
-static inline bool trap_SCR_HaveQuickMenu( void ) {
-	return CGAME_IMPORT.SCR_HaveQuickMenu();
-}
-
-static inline bool trap_SCR_IsQuickMenuShown( void ) {
-	return CGAME_IMPORT.SCR_IsQuickMenuShown();
-}
-
 static inline void trap_SCR_DrawChat( int x, int y, int width, struct qfontface_s *font ) {
 	CGAME_IMPORT.SCR_DrawChat( x, y, width, font );
 }
 
 inline cg_fdrawchar_t trap_SCR_SetDrawCharIntercept( cg_fdrawchar_t intercept ) {
 	return CGAME_IMPORT.SCR_SetDrawCharIntercept( intercept );
+}
+
+static inline bool trap_SCR_HaveOverlay( void ) {
+	return CGAME_IMPORT.SCR_HaveOverlay();
+}
+
+static inline void trap_SCR_ShowOverlay( bool show, bool showCursor ) {
+	CGAME_IMPORT.SCR_ShowOverlay( show, showCursor );
+}
+
+static inline void trap_SCR_OverlayKeyEvent( int key, bool down ) {
+	CGAME_IMPORT.SCR_OverlayKeyEvent( key, down );
+}
+
+static inline void trap_SCR_OverlayMouseMove( int x, int y, bool abs ) {
+	CGAME_IMPORT.SCR_OverlayMouseMove( x, y, abs );
+}
+
+static inline bool trap_SCR_OverlayHover( void ) {
+	return CGAME_IMPORT.SCR_OverlayHover();
 }
 
 static inline ATTRIBUTE_MALLOC void *trap_MemAlloc( size_t size, const char *filename, int fileline ) {
@@ -552,4 +564,8 @@ static inline unsigned int trap_IN_IME_GetCandidates( char * const *cands, size_
 
 static inline unsigned int trap_IN_SupportedDevices( void ) {
 	return CGAME_IMPORT.IN_SupportedDevices();
+}
+
+static inline struct angelwrap_api_s *trap_asGetAngelExport( void ) {
+	return CGAME_IMPORT.asGetAngelExport();
 }

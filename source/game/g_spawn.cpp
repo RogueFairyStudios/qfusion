@@ -31,6 +31,7 @@ const field_t fields[] = {
 	{ "targetname", FOFS( targetname ), F_LSTRING },
 	{ "pathtarget", FOFS( pathtarget ), F_LSTRING },
 	{ "killtarget", FOFS( killtarget ), F_LSTRING },
+	{ "combattarget", FOFS( combattarget ), F_LSTRING },
 	{ "message", FOFS( message ), F_LSTRING },
 	{ "helpmessage", FOFS( helpmessage ), F_LSTRING },
 	{ "team", FOFS( team ), F_LSTRING },
@@ -169,6 +170,9 @@ spawn_t spawns[] = {
 	{ "props_skyportal", SP_skyportal },
 	{ "misc_particles", SP_misc_particles },
 	{ "misc_video_speaker", SP_misc_video_speaker },
+
+	{ "monster_army", SP_monster_soldier },
+	{ "monster_soldier", SP_monster_soldier },
 
 	{ NULL, NULL }
 };
@@ -808,6 +812,8 @@ static void G_SpawnEntities( void ) {
 
 	// items need brush model entities spawned before they are linked
 	G_Items_FinishSpawningItems();
+
+	G_PlayerTrail_Init();
 }
 
 /*
@@ -836,6 +842,7 @@ void G_InitLevel( char *mapname, char *entities, int entstrlen, int64_t levelTim
 	G_FreeCallvotes();
 
 	game.serverTime = serverTime;
+	game.prevServerTime = serverTime;
 	game.realtime = realTime;
 
 	GClip_ClearWorld(); // clear areas links
@@ -872,6 +879,8 @@ void G_InitLevel( char *mapname, char *entities, int entstrlen, int64_t levelTim
 	// make a copy of the raw entities string for parsing
 	level.map_parsed_ents = ( char * )G_LevelMalloc( entstrlen + 1 );
 	level.map_parsed_ents[0] = 0;
+
+	level.skillLevel = (int)trap_Cvar_Value( "sv_skilllevel" );
 
 	G_FreeEntities();
 

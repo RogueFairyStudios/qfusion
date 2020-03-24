@@ -509,18 +509,41 @@ void SCR_ShutdownScreen( void ) {
 }
 
 /*
-* SCR_EnableQuickMenu
+* SCR_ShowOverlay
 */
-void SCR_EnableQuickMenu( bool enable ) {
-	cls.quickmenu = enable;
-	CL_UIModule_ShowQuickMenu( cls.quickmenu );
+void SCR_ShowOverlay( bool enable, bool showCursor ) {
+	CL_UIModule_ShowOverlayMenu( enable, showCursor );
 }
 
 /*
-* SCR_IsQuickMenuShown
+* SCR_HaveOverlay
 */
-bool SCR_IsQuickMenuShown( void ) {
-	return cls.quickmenu && CL_UIModule_HaveQuickMenu();
+bool SCR_HaveOverlay( void ) {
+	return CL_UIModule_HaveOverlayMenu();
+}
+
+/*
+* SCR_OverlayHover
+*/
+bool SCR_OverlayHover( void ) {
+	return CL_UIModule_MouseHover( false );
+}
+
+/*
+* SCR_OverlayKeyEvent
+*/
+void SCR_OverlayKeyEvent( int key, bool down ) {
+	CL_UIModule_KeyEvent( false, key, down );
+}
+
+/*
+* SCR_OverlayKeyEvent
+*/
+void SCR_OverlayMouseMove( int x, int y, bool abs ) {
+	if( abs )
+		CL_UIModule_MouseSet( false, x, y, false );
+	else
+		CL_UIModule_MouseMove( false, 0, x, y );
 }
 
 /*
@@ -540,7 +563,7 @@ void SCR_DrawChat( int x, int y, int width, struct qfontface_s *font ) {
 void SCR_RunConsole( int msec ) {
 	// decide on the height of the console
 	if( cls.key_dest == key_console ) {
-		scr_conlines = bound( 0.1f, scr_consize->value, 1.0f );
+		scr_conlines = Q_bound( 0.1f, scr_consize->value, 1.0f );
 	} else {
 		scr_conlines = 0;
 	}
@@ -695,8 +718,8 @@ void SCR_UpdateScreen( void ) {
 	}
 
 	cinematic = cls.state == CA_CINEMATIC ? true : false;
-	forcevsync = cinematic || ( cls.state == CA_DISCONNECTED && scr_con_current );
-	forceclear = cinematic;
+	forcevsync = cinematic || ( cls.state == CA_DISCONNECTED );
+	forceclear = cinematic || ( cls.state == CA_DISCONNECTED );
 	timedemo = cl_timedemo->integer != 0 && cls.demo.playing;
 
 	for( i = 0; i < numframes; i++ ) {

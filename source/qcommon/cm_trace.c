@@ -22,6 +22,44 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "qcommon.h"
 #include "cm_local.h"
 
+typedef struct {
+	int leaf_topnode;
+	int leaf_count, leaf_maxcount;
+	int *leaf_list;
+	float *leaf_mins, *leaf_maxs;
+} boxLeafsWork_t;
+
+typedef struct {
+	bool ispoint;
+	int contents;
+	int checkcount;
+
+#ifdef TRACEVICFIX
+	float realfraction;
+#endif
+
+	vec3_t extents;
+
+	vec3_t start, end;
+	vec3_t mins, maxs;
+	vec3_t startmins, startmaxs;
+	vec3_t endmins, endmaxs;
+	vec3_t absmins, absmaxs;
+
+	trace_t *trace;
+
+	int nummarkbrushes;
+	cbrush_t *brushes;
+	int *markbrushes;
+
+	int nummarkfaces;
+	cface_t *faces;
+	int *markfaces;
+
+	int *brush_checkcounts;
+	int *face_checkcounts;
+} traceWork_t;
+
 /*
 * CM_InitBoxHull
 *
@@ -40,8 +78,9 @@ void CM_InitBoxHull( cmodel_state_t *cms ) {
 	// Make sure CM_CollideBox() will not reject the brush by its bounds
 	ClearBounds( cms->box_brush->maxs, cms->box_brush->mins );
 
-	cms->box_markbrushes[0] = cms->box_brush;
+	cms->box_markbrushes[0] = 0;
 
+	cms->box_cmodel->brushes = cms->box_brush;
 	cms->box_cmodel->builtin = true;
 	cms->box_cmodel->nummarkfaces = 0;
 	cms->box_cmodel->markfaces = NULL;
@@ -51,11 +90,10 @@ void CM_InitBoxHull( cmodel_state_t *cms ) {
 	for( i = 0; i < 6; i++ ) {
 		// brush sides
 		s = cms->box_brushsides + i;
-		s->plane = cms->box_planes + i;
 		s->surfFlags = 0;
 
 		// planes
-		p = &cms->box_planes[i];
+		p = &s->plane;
 		VectorClear( p->normal );
 
 		if( ( i & 1 ) ) {
@@ -94,8 +132,9 @@ void CM_InitOctagonHull( cmodel_state_t *cms ) {
 	// Make sure CM_CollideBox() will not reject the brush by its bounds
 	ClearBounds( cms->oct_brush->maxs, cms->oct_brush->mins );
 
-	cms->oct_markbrushes[0] = cms->oct_brush;
+	cms->oct_markbrushes[0] = 0;
 
+	cms->oct_cmodel->brushes = cms->oct_brush;
 	cms->oct_cmodel->builtin = true;
 	cms->oct_cmodel->nummarkfaces = 0;
 	cms->oct_cmodel->markfaces = NULL;
@@ -106,11 +145,10 @@ void CM_InitOctagonHull( cmodel_state_t *cms ) {
 	for( i = 0; i < 6; i++ ) {
 		// brush sides
 		s = cms->oct_brushsides + i;
-		s->plane = cms->oct_planes + i;
 		s->surfFlags = 0;
 
 		// planes
-		p = &cms->oct_planes[i];
+		p = &s->plane;
 		VectorClear( p->normal );
 
 		if( ( i & 1 ) ) {
@@ -128,11 +166,10 @@ void CM_InitOctagonHull( cmodel_state_t *cms ) {
 	for( i = 6; i < 10; i++ ) {
 		// brush sides
 		s = cms->oct_brushsides + i;
-		s->plane = cms->oct_planes + i;
 		s->surfFlags = 0;
 
 		// planes
-		p = &cms->oct_planes[i];
+		p = &s->plane;
 		VectorCopy( oct_dirs[i - 6], p->normal );
 
 		p->type = PLANE_NONAXIAL;
@@ -146,12 +183,12 @@ void CM_InitOctagonHull( cmodel_state_t *cms ) {
 * To keep everything totally uniform, bounding boxes are turned into inline models
 */
 cmodel_t *CM_ModelForBBox( cmodel_state_t *cms, vec3_t mins, vec3_t maxs ) {
-	cms->box_planes[0].dist = maxs[0];
-	cms->box_planes[1].dist = -mins[0];
-	cms->box_planes[2].dist = maxs[1];
-	cms->box_planes[3].dist = -mins[1];
-	cms->box_planes[4].dist = maxs[2];
-	cms->box_planes[5].dist = -mins[2];
+	cms->box_brushsides[0].plane.dist = maxs[0];
+	cms->box_brushsides[1].plane.dist = -mins[0];
+	cms->box_brushsides[2].plane.dist = maxs[1];
+	cms->box_brushsides[3].plane.dist = -mins[1];
+	cms->box_brushsides[4].plane.dist = maxs[2];
+	cms->box_brushsides[5].plane.dist = -mins[2];
 
 	VectorCopy( mins, cms->box_cmodel->mins );
 	VectorCopy( maxs, cms->box_cmodel->maxs );
@@ -181,12 +218,12 @@ cmodel_t *CM_OctagonModelForBBox( cmodel_state_t *cms, vec3_t mins, vec3_t maxs 
 	VectorCopy( size[0], cms->oct_cmodel->mins );
 	VectorCopy( size[1], cms->oct_cmodel->maxs );
 
-	cms->oct_planes[0].dist = size[1][0];
-	cms->oct_planes[1].dist = -size[0][0];
-	cms->oct_planes[2].dist = size[1][1];
-	cms->oct_planes[3].dist = -size[0][1];
-	cms->oct_planes[4].dist = size[1][2];
-	cms->oct_planes[5].dist = -size[0][2];
+	cms->oct_brushsides[0].plane.dist = size[1][0];
+	cms->oct_brushsides[1].plane.dist = -size[0][0];
+	cms->oct_brushsides[2].plane.dist = size[1][1];
+	cms->oct_brushsides[3].plane.dist = -size[0][1];
+	cms->oct_brushsides[4].plane.dist = size[1][2];
+	cms->oct_brushsides[5].plane.dist = -size[0][2];
 
 	a = size[1][0]; // halfx
 	b = size[1][1]; // halfy
@@ -206,17 +243,17 @@ cmodel_t *CM_OctagonModelForBBox( cmodel_state_t *cms, vec3_t mins, vec3_t maxs 
 
 	// the following should match normals and signbits set in CM_InitOctagonHull
 
-	VectorSet( cms->oct_planes[6].normal, cosa, sina, 0 );
-	cms->oct_planes[6].dist = d;
+	VectorSet( cms->oct_brushsides[6].plane.normal, cosa, sina, 0 );
+	cms->oct_brushsides[6].plane.dist = d;
 
-	VectorSet( cms->oct_planes[7].normal, -cosa, sina, 0 );
-	cms->oct_planes[7].dist = d;
+	VectorSet( cms->oct_brushsides[7].plane.normal, -cosa, sina, 0 );
+	cms->oct_brushsides[7].plane.dist = d;
 
-	VectorSet( cms->oct_planes[8].normal, -cosa, -sina, 0 );
-	cms->oct_planes[8].dist = d;
+	VectorSet( cms->oct_brushsides[8].plane.normal, -cosa, -sina, 0 );
+	cms->oct_brushsides[8].plane.dist = d;
 
-	VectorSet( cms->oct_planes[9].normal, cosa, -sina, 0 );
-	cms->oct_planes[9].dist = d;
+	VectorSet( cms->oct_brushsides[9].plane.normal, cosa, -sina, 0 );
+	cms->oct_brushsides[9].plane.dist = d;
 
 	return cms->oct_cmodel;
 }
@@ -245,13 +282,13 @@ int CM_PointLeafnum( cmodel_state_t *cms, const vec3_t p ) {
 *
 * Fills in a list of all the leafs touched
 */
-static void CM_BoxLeafnums_r( cmodel_state_t *cms, int nodenum ) {
+static void CM_BoxLeafnums_r( boxLeafsWork_t *bw, cmodel_state_t *cms, int nodenum ) {
 	int s;
 	cnode_t *node;
 
 	while( nodenum >= 0 ) {
 		node = &cms->map_nodes[nodenum];
-		s = BOX_ON_PLANE_SIDE( cms->leaf_mins, cms->leaf_maxs, node->plane ) - 1;
+		s = BOX_ON_PLANE_SIDE( bw->leaf_mins, bw->leaf_maxs, node->plane ) - 1;
 
 		if( s < 2 ) {
 			nodenum = node->children[s];
@@ -259,15 +296,15 @@ static void CM_BoxLeafnums_r( cmodel_state_t *cms, int nodenum ) {
 		}
 
 		// go down both sides
-		if( cms->leaf_topnode == -1 ) {
-			cms->leaf_topnode = nodenum;
+		if( bw->leaf_topnode == -1 ) {
+			bw->leaf_topnode = nodenum;
 		}
-		CM_BoxLeafnums_r( cms, node->children[0] );
+		CM_BoxLeafnums_r( bw, cms, node->children[0] );
 		nodenum = node->children[1];
 	}
 
-	if( cms->leaf_count < cms->leaf_maxcount ) {
-		cms->leaf_list[cms->leaf_count++] = -1 - nodenum;
+	if( bw->leaf_count < bw->leaf_maxcount ) {
+		bw->leaf_list[bw->leaf_count++] = -1 - nodenum;
 	}
 }
 
@@ -275,21 +312,37 @@ static void CM_BoxLeafnums_r( cmodel_state_t *cms, int nodenum ) {
 * CM_BoxLeafnums
 */
 int CM_BoxLeafnums( cmodel_state_t *cms, vec3_t mins, vec3_t maxs, int *list, int listsize, int *topnode ) {
-	cms->leaf_list = list;
-	cms->leaf_count = 0;
-	cms->leaf_maxcount = listsize;
-	cms->leaf_mins = mins;
-	cms->leaf_maxs = maxs;
+	boxLeafsWork_t bw;
 
-	cms->leaf_topnode = -1;
+	bw.leaf_list = list;
+	bw.leaf_count = 0;
+	bw.leaf_maxcount = listsize;
+	bw.leaf_mins = mins;
+	bw.leaf_maxs = maxs;
+	bw.leaf_topnode = -1;
 
-	CM_BoxLeafnums_r( cms, 0 );
+	CM_BoxLeafnums_r( &bw, cms, 0 );
 
 	if( topnode ) {
-		*topnode = cms->leaf_topnode;
+		*topnode = bw.leaf_topnode;
 	}
 
-	return cms->leaf_count;
+	return bw.leaf_count;
+}
+
+/*
+* CM_RoundUpToHullSize
+*/
+void CM_RoundUpToHullSize( cmodel_state_t *cms, vec3_t mins, vec3_t maxs, cmodel_t *cmodel ) {
+	if( !cmodel ) {
+		cmodel = cms->map_cmodels;
+	}
+
+	// special rounding code
+	if( !cmodel->builtin && cms->CM_RoundUpToHullSize ) {
+		cms->CM_RoundUpToHullSize( cms, mins, maxs, cmodel );
+		return;
+	}
 }
 
 /*
@@ -300,7 +353,7 @@ static inline int CM_BrushContents( cbrush_t *brush, vec3_t p ) {
 	cbrushside_t *brushside;
 
 	for( i = 0, brushside = brush->brushsides; i < brush->numsides; i++, brushside++ )
-		if( PlaneDiff( p, brushside->plane ) > 0 ) {
+		if( PlaneDiff( p, &brushside->plane ) > 0 ) {
 			return 0;
 		}
 
@@ -314,7 +367,7 @@ static inline int CM_PatchContents( cface_t *patch, vec3_t p ) {
 	int i, c;
 	cbrush_t *facet;
 
-	for( i = 0, facet = patch->facets; i < patch->numfacets; i++, patch++ )
+	for( i = 0, facet = patch->facets; i < patch->numfacets; i++, facet++ )
 		if( ( c = CM_BrushContents( facet, p ) ) ) {
 			return c;
 		}
@@ -328,8 +381,10 @@ static inline int CM_PatchContents( cface_t *patch, vec3_t p ) {
 static int CM_PointContents( cmodel_state_t *cms, vec3_t p, cmodel_t *cmodel ) {
 	int i, superContents, contents;
 	int nummarkfaces, nummarkbrushes;
-	cface_t *patch, **markface;
-	cbrush_t *brush, **markbrush;
+	cface_t *faces;
+	int *markface;
+	cbrush_t *brushes;
+	int *markbrush;
 
 	if( !cms->numnodes ) {  // map not loaded
 		return 0;
@@ -359,9 +414,11 @@ static int CM_PointContents( cmodel_state_t *cms, vec3_t p, cmodel_t *cmodel ) {
 	}
 
 	contents = superContents;
+	brushes = cmodel->brushes;
+	faces = cmodel->faces;
 
 	for( i = 0; i < nummarkbrushes; i++ ) {
-		brush = markbrush[i];
+		cbrush_t *brush = brushes + markbrush[i];
 
 		// check if brush adds something to contents
 		if( contents & brush->contents ) {
@@ -373,11 +430,11 @@ static int CM_PointContents( cmodel_state_t *cms, vec3_t p, cmodel_t *cmodel ) {
 
 	if( !cm_noCurves->integer ) {
 		for( i = 0; i < nummarkfaces; i++ ) {
-			patch = markface[i];
+			cface_t *patch = faces + markface[i];
 
 			// check if patch adds something to contents
 			if( contents & patch->contents ) {
-				if( BoundsIntersect( p, p, patch->mins, patch->maxs ) ) {
+				if( BoundsOverlap( p, p, patch->mins, patch->maxs ) ) {
 					if( !( contents &= ~CM_PatchContents( patch, p ) ) ) {
 						return superContents;
 					}
@@ -455,33 +512,19 @@ BOX TRACING
 #endif
 #define RADIUS_EPSILON      1.0f
 
-static vec3_t trace_start, trace_end;
-static vec3_t trace_mins, trace_maxs;
-static vec3_t trace_startmins, trace_endmins;
-static vec3_t trace_startmaxs, trace_endmaxs;
-static vec3_t trace_absmins, trace_absmaxs;
-static vec3_t trace_extents;
-
-static trace_t  *trace_trace;
-#ifdef TRACEVICFIX
-static float trace_realfraction;
-#endif
-static int trace_contents;
-static bool trace_ispoint;      // optimized case
-
 /*
 * CM_ClipBoxToBrush
 */
-static void CM_ClipBoxToBrush( cmodel_state_t *cms, cbrush_t *brush ) {
+static void CM_ClipBoxToBrush( cmodel_state_t *cms, traceWork_t *tw, const cbrush_t *brush ) {
 	int i;
-	cplane_t *p, *clipplane;
+	const cplane_t *p, *clipplane;
 	float enterfrac, leavefrac;
 #ifdef TRACEVICFIX
 	float enterdist = 0, move = 1;
 #endif
 	float d1, d2, f;
 	bool getout, startout;
-	cbrushside_t *side, *leadside;
+	const cbrushside_t *side, *leadside;
 
 	if( !brush->numsides ) {
 		return;
@@ -499,45 +542,45 @@ static void CM_ClipBoxToBrush( cmodel_state_t *cms, cbrush_t *brush ) {
 	side = brush->brushsides;
 
 	for( i = 0; i < brush->numsides; i++, side++ ) {
-		p = side->plane;
+		p = &side->plane;
 
 		// push the plane out apropriately for mins/maxs
 		if( p->type < 3 ) {
-			d1 = trace_startmins[p->type] - p->dist;
-			d2 = trace_endmins[p->type] - p->dist;
+			d1 = tw->startmins[p->type] - p->dist;
+			d2 = tw->endmins[p->type] - p->dist;
 		} else {
 			switch( p->signbits ) {
 				case 0:
-					d1 = p->normal[0] * trace_startmins[0] + p->normal[1] * trace_startmins[1] + p->normal[2] * trace_startmins[2] - p->dist;
-					d2 = p->normal[0] * trace_endmins[0] + p->normal[1] * trace_endmins[1] + p->normal[2] * trace_endmins[2] - p->dist;
+					d1 = p->normal[0] * tw->startmins[0] + p->normal[1] * tw->startmins[1] + p->normal[2] * tw->startmins[2] - p->dist;
+					d2 = p->normal[0] * tw->endmins[0] + p->normal[1] * tw->endmins[1] + p->normal[2] * tw->endmins[2] - p->dist;
 					break;
 				case 1:
-					d1 = p->normal[0] * trace_startmaxs[0] + p->normal[1] * trace_startmins[1] + p->normal[2] * trace_startmins[2] - p->dist;
-					d2 = p->normal[0] * trace_endmaxs[0] + p->normal[1] * trace_endmins[1] + p->normal[2] * trace_endmins[2] - p->dist;
+					d1 = p->normal[0] * tw->startmaxs[0] + p->normal[1] * tw->startmins[1] + p->normal[2] * tw->startmins[2] - p->dist;
+					d2 = p->normal[0] * tw->endmaxs[0] + p->normal[1] * tw->endmins[1] + p->normal[2] * tw->endmins[2] - p->dist;
 					break;
 				case 2:
-					d1 = p->normal[0] * trace_startmins[0] + p->normal[1] * trace_startmaxs[1] + p->normal[2] * trace_startmins[2] - p->dist;
-					d2 = p->normal[0] * trace_endmins[0] + p->normal[1] * trace_endmaxs[1] + p->normal[2] * trace_endmins[2] - p->dist;
+					d1 = p->normal[0] * tw->startmins[0] + p->normal[1] * tw->startmaxs[1] + p->normal[2] * tw->startmins[2] - p->dist;
+					d2 = p->normal[0] * tw->endmins[0] + p->normal[1] * tw->endmaxs[1] + p->normal[2] * tw->endmins[2] - p->dist;
 					break;
 				case 3:
-					d1 = p->normal[0] * trace_startmaxs[0] + p->normal[1] * trace_startmaxs[1] + p->normal[2] * trace_startmins[2] - p->dist;
-					d2 = p->normal[0] * trace_endmaxs[0] + p->normal[1] * trace_endmaxs[1] + p->normal[2] * trace_endmins[2] - p->dist;
+					d1 = p->normal[0] * tw->startmaxs[0] + p->normal[1] * tw->startmaxs[1] + p->normal[2] * tw->startmins[2] - p->dist;
+					d2 = p->normal[0] * tw->endmaxs[0] + p->normal[1] * tw->endmaxs[1] + p->normal[2] * tw->endmins[2] - p->dist;
 					break;
 				case 4:
-					d1 = p->normal[0] * trace_startmins[0] + p->normal[1] * trace_startmins[1] + p->normal[2] * trace_startmaxs[2] - p->dist;
-					d2 = p->normal[0] * trace_endmins[0] + p->normal[1] * trace_endmins[1] + p->normal[2] * trace_endmaxs[2] - p->dist;
+					d1 = p->normal[0] * tw->startmins[0] + p->normal[1] * tw->startmins[1] + p->normal[2] * tw->startmaxs[2] - p->dist;
+					d2 = p->normal[0] * tw->endmins[0] + p->normal[1] * tw->endmins[1] + p->normal[2] * tw->endmaxs[2] - p->dist;
 					break;
 				case 5:
-					d1 = p->normal[0] * trace_startmaxs[0] + p->normal[1] * trace_startmins[1] + p->normal[2] * trace_startmaxs[2] - p->dist;
-					d2 = p->normal[0] * trace_endmaxs[0] + p->normal[1] * trace_endmins[1] + p->normal[2] * trace_endmaxs[2] - p->dist;
+					d1 = p->normal[0] * tw->startmaxs[0] + p->normal[1] * tw->startmins[1] + p->normal[2] * tw->startmaxs[2] - p->dist;
+					d2 = p->normal[0] * tw->endmaxs[0] + p->normal[1] * tw->endmins[1] + p->normal[2] * tw->endmaxs[2] - p->dist;
 					break;
 				case 6:
-					d1 = p->normal[0] * trace_startmins[0] + p->normal[1] * trace_startmaxs[1] + p->normal[2] * trace_startmaxs[2] - p->dist;
-					d2 = p->normal[0] * trace_endmins[0] + p->normal[1] * trace_endmaxs[1] + p->normal[2] * trace_endmaxs[2] - p->dist;
+					d1 = p->normal[0] * tw->startmins[0] + p->normal[1] * tw->startmaxs[1] + p->normal[2] * tw->startmaxs[2] - p->dist;
+					d2 = p->normal[0] * tw->endmins[0] + p->normal[1] * tw->endmaxs[1] + p->normal[2] * tw->endmaxs[2] - p->dist;
 					break;
 				case 7:
-					d1 = p->normal[0] * trace_startmaxs[0] + p->normal[1] * trace_startmaxs[1] + p->normal[2] * trace_startmaxs[2] - p->dist;
-					d2 = p->normal[0] * trace_endmaxs[0] + p->normal[1] * trace_endmaxs[1] + p->normal[2] * trace_endmaxs[2] - p->dist;
+					d1 = p->normal[0] * tw->startmaxs[0] + p->normal[1] * tw->startmaxs[1] + p->normal[2] * tw->startmaxs[2] - p->dist;
+					d2 = p->normal[0] * tw->endmaxs[0] + p->normal[1] * tw->endmaxs[1] + p->normal[2] * tw->endmaxs[2] - p->dist;
 					break;
 				default:
 					d1 = d2 = 0; // shut up compiler
@@ -599,40 +642,40 @@ static void CM_ClipBoxToBrush( cmodel_state_t *cms, cbrush_t *brush ) {
 
 	if( !startout ) {
 		// original point was inside brush
-		trace_trace->startsolid = true;
-		trace_trace->contents = brush->contents;
+		tw->trace->startsolid = true;
+		tw->contents = brush->contents;
 		if( !getout ) {
-			trace_trace->allsolid = true;
-			trace_trace->fraction = 0;
+			tw->trace->allsolid = true;
+			tw->trace->fraction = 0;
 		}
 		return;
 	}
 #ifdef TRACEVICFIX
 	if( enterfrac - FRAC_EPSILON <= leavefrac ) {
-		if( enterfrac > -1 && enterfrac < trace_realfraction ) {
+		if( enterfrac > -1 && enterfrac < tw->realfraction ) {
 			if( enterfrac < 0 ) {
 				enterfrac = 0;
 			}
-			trace_realfraction = enterfrac;
-			trace_trace->plane = *clipplane;
-			trace_trace->surfFlags = leadside->surfFlags;
-			trace_trace->contents = brush->contents;
-			trace_trace->fraction = ( enterdist - DIST_EPSILON ) / move;
-			if( trace_trace->fraction < 0 ) {
-				trace_trace->fraction = 0;
+			tw->realfraction = enterfrac;
+			tw->trace->plane = *clipplane;
+			tw->trace->surfFlags = leadside->surfFlags;
+			tw->trace->contents = brush->contents;
+			tw->trace->fraction = ( enterdist - DIST_EPSILON ) / move;
+			if( tw->trace->fraction < 0 ) {
+				tw->trace->fraction = 0;
 			}
 		}
 	}
 #else
 	if( enterfrac - ( 1.0f / 1024.0f ) <= leavefrac ) {
-		if( enterfrac > -1 && enterfrac < trace_trace->fraction ) {
+		if( enterfrac > -1 && enterfrac < tw->trace->fraction ) {
 			if( enterfrac < 0 ) {
 				enterfrac = 0;
 			}
-			trace_trace->fraction = enterfrac;
-			trace_trace->plane = *clipplane;
-			trace_trace->surfFlags = leadside->surfFlags;
-			trace_trace->contents = brush->contents;
+			tw->trace->fraction = enterfrac;
+			tw->trace->plane = *clipplane;
+			tw->trace->surfFlags = leadside->surfFlags;
+			tw->trace->contents = brush->contents;
 		}
 	}
 #endif
@@ -641,10 +684,10 @@ static void CM_ClipBoxToBrush( cmodel_state_t *cms, cbrush_t *brush ) {
 /*
 * CM_TestBoxInBrush
 */
-static void CM_TestBoxInBrush( cmodel_state_t *cms, cbrush_t *brush ) {
+static void CM_TestBoxInBrush( cmodel_state_t *cms, traceWork_t *tw, const cbrush_t *brush ) {
 	int i;
-	cplane_t *p;
-	cbrushside_t *side;
+	const cplane_t *p;
+	const cbrushside_t *side;
 
 	if( !brush->numsides ) {
 		return;
@@ -652,53 +695,53 @@ static void CM_TestBoxInBrush( cmodel_state_t *cms, cbrush_t *brush ) {
 
 	side = brush->brushsides;
 	for( i = 0; i < brush->numsides; i++, side++ ) {
-		p = side->plane;
+		p = &side->plane;
 
 		// push the plane out appropriately for mins/maxs
 		// if completely in front of face, no intersection
 		if( p->type < 3 ) {
-			if( trace_startmins[p->type] > p->dist ) {
+			if( tw->startmins[p->type] > p->dist ) {
 				return;
 			}
 		} else {
 			switch( p->signbits ) {
 				case 0:
-					if( p->normal[0] * trace_startmins[0] + p->normal[1] * trace_startmins[1] + p->normal[2] * trace_startmins[2] > p->dist ) {
+					if( p->normal[0] * tw->startmins[0] + p->normal[1] * tw->startmins[1] + p->normal[2] * tw->startmins[2] > p->dist ) {
 						return;
 					}
 					break;
 				case 1:
-					if( p->normal[0] * trace_startmaxs[0] + p->normal[1] * trace_startmins[1] + p->normal[2] * trace_startmins[2] > p->dist ) {
+					if( p->normal[0] * tw->startmaxs[0] + p->normal[1] * tw->startmins[1] + p->normal[2] * tw->startmins[2] > p->dist ) {
 						return;
 					}
 					break;
 				case 2:
-					if( p->normal[0] * trace_startmins[0] + p->normal[1] * trace_startmaxs[1] + p->normal[2] * trace_startmins[2] > p->dist ) {
+					if( p->normal[0] * tw->startmins[0] + p->normal[1] * tw->startmaxs[1] + p->normal[2] * tw->startmins[2] > p->dist ) {
 						return;
 					}
 					break;
 				case 3:
-					if( p->normal[0] * trace_startmaxs[0] + p->normal[1] * trace_startmaxs[1] + p->normal[2] * trace_startmins[2] > p->dist ) {
+					if( p->normal[0] * tw->startmaxs[0] + p->normal[1] * tw->startmaxs[1] + p->normal[2] * tw->startmins[2] > p->dist ) {
 						return;
 					}
 					break;
 				case 4:
-					if( p->normal[0] * trace_startmins[0] + p->normal[1] * trace_startmins[1] + p->normal[2] * trace_startmaxs[2] > p->dist ) {
+					if( p->normal[0] * tw->startmins[0] + p->normal[1] * tw->startmins[1] + p->normal[2] * tw->startmaxs[2] > p->dist ) {
 						return;
 					}
 					break;
 				case 5:
-					if( p->normal[0] * trace_startmaxs[0] + p->normal[1] * trace_startmins[1] + p->normal[2] * trace_startmaxs[2] > p->dist ) {
+					if( p->normal[0] * tw->startmaxs[0] + p->normal[1] * tw->startmins[1] + p->normal[2] * tw->startmaxs[2] > p->dist ) {
 						return;
 					}
 					break;
 				case 6:
-					if( p->normal[0] * trace_startmins[0] + p->normal[1] * trace_startmaxs[1] + p->normal[2] * trace_startmaxs[2] > p->dist ) {
+					if( p->normal[0] * tw->startmins[0] + p->normal[1] * tw->startmaxs[1] + p->normal[2] * tw->startmaxs[2] > p->dist ) {
 						return;
 					}
 					break;
 				case 7:
-					if( p->normal[0] * trace_startmaxs[0] + p->normal[1] * trace_startmaxs[1] + p->normal[2] * trace_startmaxs[2] > p->dist ) {
+					if( p->normal[0] * tw->startmaxs[0] + p->normal[1] * tw->startmaxs[1] + p->normal[2] * tw->startmaxs[2] > p->dist ) {
 						return;
 					}
 					break;
@@ -710,36 +753,39 @@ static void CM_TestBoxInBrush( cmodel_state_t *cms, cbrush_t *brush ) {
 	}
 
 	// inside this brush
-	trace_trace->startsolid = trace_trace->allsolid = true;
-	trace_trace->fraction = 0;
-	trace_trace->contents = brush->contents;
+	tw->trace->startsolid = tw->trace->allsolid = true;
+	tw->trace->fraction = 0;
+	tw->trace->contents = brush->contents;
 }
 
 /*
 * CM_CollideBox
 */
-static void CM_CollideBox( cmodel_state_t *cms, cbrush_t **markbrushes, int nummarkbrushes, cface_t **markfaces,
-						   int nummarkfaces, void ( *func )( cmodel_state_t *cms, cbrush_t *b ) ) {
+static void CM_CollideBox( cmodel_state_t *cms, traceWork_t *tw, const int *markbrushes, int nummarkbrushes, 
+	const int *markfaces, int nummarkfaces, void ( *func )( cmodel_state_t *cms, traceWork_t *, const cbrush_t *b ) ) {
 	int i, j;
-	cbrush_t *b;
-	cface_t *patch;
-	cbrush_t *facet;
+	const cbrush_t *brushes = tw->brushes;
+	const cface_t *faces = tw->faces;
+	int checkcount = tw->checkcount;
 
 	// trace line against all brushes
 	for( i = 0; i < nummarkbrushes; i++ ) {
-		b = markbrushes[i];
-		if( b->checkcount == cms->checkcount ) {
+		int mb = markbrushes[i];
+		const cbrush_t *b = brushes + mb;
+
+		if( tw->brush_checkcounts[mb] == checkcount ) {
 			continue; // already checked this brush
 		}
-		b->checkcount = cms->checkcount;
-		if( !( b->contents & trace_contents ) ) {
+		tw->brush_checkcounts[mb] = checkcount;
+
+		if( !( b->contents & tw->contents ) ) {
 			continue;
 		}
-		if( !BoundsIntersect( b->mins, b->maxs, trace_absmins, trace_absmaxs ) ) {
+		if( !BoundsOverlap( b->mins, b->maxs, tw->absmins, tw->absmaxs ) ) {
 			continue;
 		}
-		func( cms, b );
-		if( !trace_trace->fraction ) {
+		func( cms, tw, b );
+		if( !tw->trace->fraction ) {
 			return;
 		}
 	}
@@ -750,24 +796,28 @@ static void CM_CollideBox( cmodel_state_t *cms, cbrush_t **markbrushes, int numm
 
 	// trace line against all patches
 	for( i = 0; i < nummarkfaces; i++ ) {
-		patch = markfaces[i];
-		if( patch->checkcount == cms->checkcount ) {
-			continue; // already checked this patch
+		int mf = markfaces[i];
+		const cface_t *patch = faces + mf;
+		const cbrush_t *facet;
+
+		if( tw->face_checkcounts[mf] == checkcount ) {
+			continue; // already checked this brush
 		}
-		patch->checkcount = cms->checkcount;
-		if( !( patch->contents & trace_contents ) ) {
+		tw->face_checkcounts[mf] = checkcount;
+
+		if( !( patch->contents & tw->contents ) ) {
 			continue;
 		}
-		if( !BoundsIntersect( patch->mins, patch->maxs, trace_absmins, trace_absmaxs ) ) {
+		if( !BoundsOverlap( patch->mins, patch->maxs, tw->absmins, tw->absmaxs ) ) {
 			continue;
 		}
 		facet = patch->facets;
 		for( j = 0; j < patch->numfacets; j++, facet++ ) {
-			if( !BoundsIntersect( facet->mins, facet->maxs, trace_absmins, trace_absmaxs ) ) {
+			if( !BoundsOverlap( facet->mins, facet->maxs, tw->absmins, tw->absmaxs ) ) {
 				continue;
 			}
-			func( cms, facet );
-			if( !trace_trace->fraction ) {
+			func( cms, tw, facet );
+			if( !tw->trace->fraction ) {
 				return;
 			}
 		}
@@ -777,25 +827,26 @@ static void CM_CollideBox( cmodel_state_t *cms, cbrush_t **markbrushes, int numm
 /*
 * CM_ClipBox
 */
-static inline void CM_ClipBox( cmodel_state_t *cms, cbrush_t **markbrushes, int nummarkbrushes, cface_t **markfaces,
-							   int nummarkfaces ) {
-	CM_CollideBox( cms, markbrushes, nummarkbrushes, markfaces, nummarkfaces, CM_ClipBoxToBrush );
+static inline void CM_ClipBox( cmodel_state_t *cms, traceWork_t *tw, 
+	const int *markbrushes, int nummarkbrushes, const int *markfaces, int nummarkfaces ) {
+	CM_CollideBox( cms, tw, markbrushes, nummarkbrushes, markfaces, nummarkfaces, CM_ClipBoxToBrush );
 }
 
 /*
 * CM_TestBox
 */
-static inline void CM_TestBox( cmodel_state_t *cms, cbrush_t **markbrushes, int nummarkbrushes, cface_t **markfaces,
-							   int nummarkfaces ) {
-	CM_CollideBox( cms, markbrushes, nummarkbrushes, markfaces, nummarkfaces, CM_TestBoxInBrush );
+static inline void CM_TestBox( cmodel_state_t *cms, traceWork_t *tw, 
+	const int *markbrushes, int nummarkbrushes, const int *markfaces, int nummarkfaces ) {
+	CM_CollideBox( cms, tw,  markbrushes, nummarkbrushes, markfaces, nummarkfaces, CM_TestBoxInBrush );
 }
 
 /*
 * CM_RecursiveHullCheck
 */
-static void CM_RecursiveHullCheck( cmodel_state_t *cms, int num, float p1f, float p2f, vec3_t p1, vec3_t p2 ) {
-	cnode_t *node;
-	cplane_t *plane;
+static void CM_RecursiveHullCheck( cmodel_state_t *cms, traceWork_t *tw, int num, 
+	float p1f, float p2f, const vec3_t p1, const vec3_t p2 ) {
+	const cnode_t *node;
+	const cplane_t *plane;
 	int side;
 	float t1, t2, offset;
 	float frac, frac2;
@@ -804,21 +855,22 @@ static void CM_RecursiveHullCheck( cmodel_state_t *cms, int num, float p1f, floa
 
 loc0:
 #ifdef TRACEVICFIX
-	if( trace_realfraction <= p1f ) {
+	if( tw->realfraction <= p1f ) {
 		return; // already hit something nearer
 	}
 #else
-	if( trace_trace->fraction <= p1f ) {
+	if( tw->trace->fraction <= p1f ) {
 		return; // already hit something nearer
 	}
 #endif
+
 	// if < 0, we are in a leaf node
 	if( num < 0 ) {
 		cleaf_t *leaf;
 
 		leaf = &cms->map_leafs[-1 - num];
-		if( leaf->contents & trace_contents ) {
-			CM_ClipBox( cms, leaf->markbrushes, leaf->nummarkbrushes, leaf->markfaces, leaf->nummarkfaces );
+		if( leaf->contents & tw->contents ) {
+			CM_ClipBox( cms, tw, leaf->markbrushes, leaf->nummarkbrushes, leaf->markfaces, leaf->nummarkfaces );
 		}
 		return;
 	}
@@ -833,16 +885,16 @@ loc0:
 	if( plane->type < 3 ) {
 		t1 = p1[plane->type] - plane->dist;
 		t2 = p2[plane->type] - plane->dist;
-		offset = trace_extents[plane->type];
+		offset = tw->extents[plane->type];
 	} else {
 		t1 = DotProduct( plane->normal, p1 ) - plane->dist;
 		t2 = DotProduct( plane->normal, p2 ) - plane->dist;
-		if( trace_ispoint ) {
+		if( tw->ispoint ) {
 			offset = 0;
 		} else {
-			offset = fabs( trace_extents[0] * plane->normal[0] ) +
-					 fabs( trace_extents[1] * plane->normal[1] ) +
-					 fabs( trace_extents[2] * plane->normal[2] );
+			offset = fabs( tw->extents[0] * plane->normal[0] ) +
+					 fabs( tw->extents[1] * plane->normal[1] ) +
+					 fabs( tw->extents[2] * plane->normal[2] );
 		}
 	}
 
@@ -884,18 +936,18 @@ loc0:
 	}
 
 	// move up to the node
-	clamp( frac, 0, 1 );
+	Q_clamp( frac, 0, 1 );
 	midf = p1f + ( p2f - p1f ) * frac;
 	VectorLerp( p1, frac, p2, mid );
 
-	CM_RecursiveHullCheck( cms, node->children[side], p1f, midf, p1, mid );
+	CM_RecursiveHullCheck( cms, tw, node->children[side], p1f, midf, p1, mid );
 
 	// go past the node
-	clamp( frac2, 0, 1 );
+	Q_clamp( frac2, 0, 1 );
 	midf = p1f + ( p2f - p1f ) * frac2;
 	VectorLerp( p1, frac2, p2, mid );
 
-	CM_RecursiveHullCheck( cms, node->children[side ^ 1], midf, p2f, mid, p2 );
+	CM_RecursiveHullCheck( cms, tw, node->children[side ^ 1], midf, p2f, mid, p2 );
 }
 
 //======================================================================
@@ -903,47 +955,66 @@ loc0:
 /*
 * CM_BoxTrace
 */
-static void CM_BoxTrace( cmodel_state_t *cms, trace_t *tr, vec3_t start, vec3_t end, vec3_t mins, vec3_t maxs,
-						 cmodel_t *cmodel, vec3_t origin, int brushmask ) {
+static void CM_BoxTrace( traceWork_t *tw, cmodel_state_t *cms, trace_t *tr, 
+	const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs, 
+	cmodel_t *cmodel, const vec3_t origin, int brushmask ) {
 	bool notworld;
 
 	notworld = ( cmodel != cms->map_cmodels ? true : false );
 
-	cms->checkcount++;  // for multi-check avoidance
 	c_traces++;     // for statistics, may be zeroed
 
 	// fill in a default trace
 	memset( tr, 0, sizeof( *tr ) );
 #ifdef TRACEVICFIX
-	tr->fraction = trace_realfraction = 1;
+	tr->fraction = tw->realfraction = 1;
 #else
 	tr->fraction = 1;
 #endif
+
 	if( !cms->numnodes ) { // map not loaded
 		return;
 	}
 
-	trace_trace = tr;
-	trace_contents = brushmask;
-	VectorCopy( start, trace_start );
-	VectorCopy( end, trace_end );
-	VectorCopy( mins, trace_mins );
-	VectorCopy( maxs, trace_maxs );
+	cms->checkcount++;  // for multi-check avoidance
+
+	memset( tw, 0, sizeof( *tw ) );
+	tw->checkcount = cms->checkcount;
+	tw->trace = tr;
+	tw->contents = brushmask;
+	VectorCopy( start, tw->start );
+	VectorCopy( end, tw->end );
+	VectorCopy( mins, tw->mins );
+	VectorCopy( maxs, tw->maxs );
 
 	// build a bounding box of the entire move
-	ClearBounds( trace_absmins, trace_absmaxs );
+	ClearBounds( tw->absmins, tw->absmaxs );
 
-	VectorAdd( start, trace_mins, trace_startmins );
-	AddPointToBounds( trace_startmins, trace_absmins, trace_absmaxs );
+	VectorAdd( start, tw->mins, tw->startmins );
+	AddPointToBounds( tw->startmins, tw->absmins, tw->absmaxs );
 
-	VectorAdd( start, trace_maxs, trace_startmaxs );
-	AddPointToBounds( trace_startmaxs, trace_absmins, trace_absmaxs );
+	VectorAdd( start, tw->maxs, tw->startmaxs );
+	AddPointToBounds( tw->startmaxs, tw->absmins, tw->absmaxs );
 
-	VectorAdd( end, trace_mins, trace_endmins );
-	AddPointToBounds( trace_endmins, trace_absmins, trace_absmaxs );
+	VectorAdd( end, tw->mins, tw->endmins );
+	AddPointToBounds( tw->endmins, tw->absmins, tw->absmaxs );
 
-	VectorAdd( end, trace_maxs, trace_endmaxs );
-	AddPointToBounds( trace_endmaxs, trace_absmins, trace_absmaxs );
+	VectorAdd( end, tw->maxs, tw->endmaxs );
+	AddPointToBounds( tw->endmaxs, tw->absmins, tw->absmaxs );
+
+	tw->brushes = cmodel->brushes;
+	tw->faces = cmodel->faces;
+
+	if( cmodel == cms->oct_cmodel ) {
+		tw->brush_checkcounts = &cms->oct_checkcount;
+		tw->face_checkcounts = NULL;
+	} else if( cmodel == cms->box_cmodel ) {
+		tw->brush_checkcounts = &cms->box_checkcount;
+		tw->face_checkcounts = NULL;
+	} else {
+		tw->brush_checkcounts = cms->map_brush_checkcheckouts;
+		tw->face_checkcounts = cms->map_face_checkcheckouts;
+	}
 
 	//
 	// check for position test special case
@@ -956,8 +1027,8 @@ static void CM_BoxTrace( cmodel_state_t *cms, trace_t *tr, vec3_t start, vec3_t 
 		cleaf_t *leaf;
 
 		if( notworld ) {
-			if( BoundsIntersect( cmodel->mins, cmodel->maxs, trace_absmins, trace_absmaxs ) ) {
-				CM_TestBox( cms, cmodel->markbrushes, cmodel->nummarkbrushes, cmodel->markfaces, cmodel->nummarkfaces );
+			if( BoundsOverlap( cmodel->mins, cmodel->maxs, tw->absmins, tw->absmaxs ) ) {
+				CM_TestBox( cms, tw, cmodel->markbrushes, cmodel->nummarkbrushes, cmodel->markfaces, cmodel->nummarkfaces );
 			}
 		} else {
 			for( i = 0; i < 3; i++ ) {
@@ -969,8 +1040,8 @@ static void CM_BoxTrace( cmodel_state_t *cms, trace_t *tr, vec3_t start, vec3_t 
 			for( i = 0; i < numleafs; i++ ) {
 				leaf = &cms->map_leafs[leafs[i]];
 
-				if( leaf->contents & trace_contents ) {
-					CM_TestBox( cms, leaf->markbrushes, leaf->nummarkbrushes, leaf->markfaces, leaf->nummarkfaces );
+				if( leaf->contents & brushmask ) {
+					CM_TestBox( cms, tw, leaf->markbrushes, leaf->nummarkbrushes, leaf->markfaces, leaf->nummarkfaces );
 					if( tr->allsolid ) {
 						break;
 					}
@@ -986,11 +1057,11 @@ static void CM_BoxTrace( cmodel_state_t *cms, trace_t *tr, vec3_t start, vec3_t 
 	// check for point special case
 	//
 	if( VectorCompare( mins, vec3_origin ) && VectorCompare( maxs, vec3_origin ) ) {
-		trace_ispoint = true;
-		VectorClear( trace_extents );
+		tw->ispoint = true;
+		VectorClear( tw->extents );
 	} else {
-		trace_ispoint = false;
-		VectorSet( trace_extents,
+		tw->ispoint = false;
+		VectorSet( tw->extents,
 				   -mins[0] > maxs[0] ? -mins[0] : maxs[0],
 				   -mins[1] > maxs[1] ? -mins[1] : maxs[1],
 				   -mins[2] > maxs[2] ? -mins[2] : maxs[2] );
@@ -1000,9 +1071,9 @@ static void CM_BoxTrace( cmodel_state_t *cms, trace_t *tr, vec3_t start, vec3_t 
 	// general sweeping through world
 	//
 	if( !notworld ) {
-		CM_RecursiveHullCheck( cms, 0, 0, 1, start, end );
-	} else if( BoundsIntersect( cmodel->mins, cmodel->maxs, trace_absmins, trace_absmaxs ) ) {
-		CM_ClipBox( cms, cmodel->markbrushes, cmodel->nummarkbrushes, cmodel->markfaces, cmodel->nummarkfaces );
+		CM_RecursiveHullCheck( cms, tw, 0, 0, 1, start, end );
+	} else if( BoundsOverlap( cmodel->mins, cmodel->maxs, tw->absmins, tw->absmaxs ) ) {
+		CM_ClipBox( cms, tw, cmodel->markbrushes, cmodel->nummarkbrushes, cmodel->markfaces, cmodel->nummarkfaces );
 	}
 
 #ifdef TRACEVICFIX
@@ -1032,6 +1103,7 @@ void CM_TransformedBoxTrace( cmodel_state_t *cms, trace_t *tr, vec3_t start, vec
 	vec3_t a, temp;
 	mat3_t axis;
 	bool rotated;
+	traceWork_t tw;
 
 	if( !tr ) {
 		return;
@@ -1051,7 +1123,7 @@ void CM_TransformedBoxTrace( cmodel_state_t *cms, trace_t *tr, vec3_t start, vec
 	}
 
 	// special tracing code
-	if( !cmodel->builtin && cms->CM_TransformedPointContents ) {
+	if( !cmodel->builtin && cms->CM_TransformedBoxTrace ) {
 		cms->CM_TransformedBoxTrace( cms, tr, start, end, mins, maxs, cmodel, brushmask, origin, angles );
 		return;
 	}
@@ -1095,7 +1167,7 @@ void CM_TransformedBoxTrace( cmodel_state_t *cms, trace_t *tr, vec3_t start, vec
 	}
 
 	// sweep the box through the model
-	CM_BoxTrace( cms, tr, start_l, end_l, mins, maxs, cmodel, origin, brushmask );
+	CM_BoxTrace( &tw, cms, tr, start_l, end_l, mins, maxs, cmodel, origin, brushmask );
 
 	if( rotated && tr->fraction != 1.0 ) {
 		VectorNegate( angles, a );

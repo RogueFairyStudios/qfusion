@@ -59,7 +59,6 @@ typedef struct {
 
 	char configstrings[MAX_CONFIGSTRINGS][MAX_CONFIGSTRING_CHARS];
 	entity_state_t baselines[MAX_EDICTS];
-	int num_mv_clients;     // current number, <= sv_maxmvclients
 
 	//
 	// global variables shared between game and server
@@ -172,8 +171,6 @@ typedef struct client_s {
 
 	netchan_t netchan;
 
-	bool tvclient;
-
 	int mm_session;
 	unsigned int mm_ticket;
 	char mm_login[MAX_INFO_VALUE];
@@ -216,16 +213,6 @@ typedef struct {
 
 typedef server_static_demo_t demorec_t;
 
-#ifdef TCP_ALLOW_CONNECT
-#define MAX_INCOMING_CONNECTIONS 256
-typedef struct {
-	bool active;
-	int64_t time;      // for timeout
-	socket_t socket;
-	netadr_t address;
-} incoming_t;
-#endif
-
 #define MAX_MOTD_LEN 1024
 
 typedef struct client_entities_s {
@@ -242,10 +229,6 @@ typedef struct {
 	socket_t socket_udp;
 	socket_t socket_udp6;
 	socket_t socket_loopback;
-#ifdef TCP_ALLOW_CONNECT
-	socket_t socket_tcp;
-	socket_t socket_tcp6;
-#endif
 
 	char mapcmd[MAX_TOKEN_CHARS];       // ie: *intro.cin+base
 
@@ -256,9 +239,6 @@ typedef struct {
 	client_entities_t client_entities;
 
 	challenge_t challenges[MAX_CHALLENGES]; // to prevent invalid IPs from connecting
-#ifdef TCP_ALLOW_CONNECT
-	incoming_t incoming[MAX_INCOMING_CONNECTIONS]; // holds socket while tcp client is connecting
-#endif
 
 	server_static_demo_t demo;
 
@@ -313,7 +293,6 @@ extern cvar_t *sv_http_upstream_realip_header;
 
 extern cvar_t *sv_skilllevel;
 extern cvar_t *sv_maxclients;
-extern cvar_t *sv_maxmvclients;
 
 extern cvar_t *sv_enforcetime;
 extern cvar_t *sv_showRcon;
@@ -449,7 +428,7 @@ void SV_BroadcastCommand( _Printf_format_string_ const char *format, ... );
 //
 void SV_ParseClientMessage( client_t *client, msg_t *msg );
 bool SV_ClientConnect( const socket_t *socket, const netadr_t *address, client_t *client, char *userinfo,
-					   int game_port, int challenge, bool fakeClient, bool tvClient,
+					   int game_port, int challenge, bool fakeClient,
 					   unsigned int ticket_id, int session_id );
 
 #ifndef _MSC_VER

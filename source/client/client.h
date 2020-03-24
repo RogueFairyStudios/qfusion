@@ -207,7 +207,6 @@ typedef struct {
 	connstate_t state;          // only set through CL_SetClientState
 	keydest_t key_dest;
 	keydest_t old_key_dest;
-	bool quickmenu;
 
 	int64_t framecount;
 	int64_t realtime;               // always increasing, no clamping, etc
@@ -218,9 +217,6 @@ typedef struct {
 	socket_t socket_loopback;
 	socket_t socket_udp;
 	socket_t socket_udp6;
-#ifdef TCP_SUPPORT
-	socket_t socket_tcp;
-#endif
 
 	// screen rendering information
 	bool cgameActive;
@@ -239,8 +235,6 @@ typedef struct {
 	int connect_count;
 
 	socket_t *socket;               // socket used by current connection
-	bool reliable;
-	bool mv;
 
 	netadr_t rconaddress;       // address where we are sending rcon messages, to ignore other print packets
 
@@ -289,7 +283,6 @@ typedef struct {
 
 	// pure list
 	bool sv_pure;
-	bool sv_tv;
 	bool pure_restart;
 
 	purelist_t *purelist;
@@ -301,6 +294,7 @@ typedef struct {
 	char session[MAX_INFO_VALUE];
 
 	void *wakelock;
+	bool show_cursor;
 } client_static_t;
 
 extern client_static_t cls;
@@ -405,16 +399,25 @@ void CL_GameModule_Reset( void );
 void CL_GameModule_Shutdown( void );
 void CL_GameModule_ConfigString( int number, const char *value );
 void CL_GameModule_EscapeKey( void );
-float CL_GameModule_GetSensitivityScale( float sens, float zoomSens );
 bool CL_GameModule_NewSnapshot( int pendingSnapshot );
 void CL_GameModule_RenderView( float stereo_separation );
 void CL_GameModule_GetEntitySpatilization( int entnum, vec3_t origin, vec3_t velocity );
-void CL_GameModule_InputFrame( int frameTime );
+void CL_GameModule_InputFrame( int64_t inputTime );
 void CL_GameModule_ClearInputState( void );
 unsigned CL_GameModule_GetButtonBits( void );
 void CL_GameModule_AddViewAngles( vec3_t viewAngles );
 void CL_GameModule_AddMovement( vec3_t movement );
 void CL_GameModule_MouseMove( int dx, int dy );
+
+/**
+* Passes the key press/up event to clientside game module.
+* Returns true if the action bound to the key should not be sent to the interpreter.
+*
+* @param key  key id
+* @param down true, if it's a button down event
+*/
+bool CL_GameModule_KeyEvent( int key, bool down );
+
 void CL_GameModule_TouchEvent( int id, touchevent_t type, int x, int y, int64_t time );
 bool CL_GameModule_IsTouchDown( int id );
 
@@ -449,24 +452,16 @@ void CL_SoundModule_LockBackgroundTrack( bool lock );
 void CL_SoundModule_BeginAviDemo( void );
 void CL_SoundModule_StopAviDemo( void );
 
-void CL_Mumble_Init( void );
-void CL_Mumble_Link( void );
-void CL_Mumble_Unlink( void );
-void CL_Mumble_Update( const vec3_t origin, const mat3_t axis, const char *identity );
-void CL_Mumble_Shutdown( void );
-
 //
 // cl_ui.c
 //
 void CL_UIModule_Init( void );
 void CL_UIModule_Shutdown( void );
 void CL_UIModule_TouchAllAssets( void );
-void CL_UIModule_Keydown( int key );
-void CL_UIModule_Keyup( int key );
-void CL_UIModule_KeydownQuick( int key );
-void CL_UIModule_KeyupQuick( int key );
-void CL_UIModule_CharEvent( wchar_t key );
-bool CL_UIModule_TouchEvent( int id, touchevent_t type, int x, int y );
+void CL_UIModule_KeyEvent( bool mainContext, int key, bool down );
+void CL_UIModule_KeyEventQuick( int key, bool down );
+void CL_UIModule_CharEvent( bool mainContext, wchar_t key );
+bool CL_UIModule_TouchEvent( bool mainContext, int id, touchevent_t type, int x, int y );
 bool CL_UIModule_TouchEventQuick( int id, touchevent_t type, int x, int y );
 bool CL_UIModule_IsTouchDown( int id );
 bool CL_UIModule_IsTouchDownQuick( int id );
@@ -475,11 +470,12 @@ void CL_UIModule_Refresh( bool backGround, bool showCursor );
 void CL_UIModule_UpdateConnectScreen( bool backGround );
 void CL_UIModule_ForceMenuOn( void );
 void CL_UIModule_ForceMenuOff( void );
-void CL_UIModule_ShowQuickMenu( bool show );
-bool CL_UIModule_HaveQuickMenu( void );
+void CL_UIModule_ShowOverlayMenu( bool show, bool showCursor );
+bool CL_UIModule_HaveOverlayMenu( void );
 void CL_UIModule_AddToServerList( const char *adr, const char *info );
-void CL_UIModule_MouseMove( int frameTime, int dx, int dy );
-void CL_UIModule_MouseSet( int mx, int my, bool showCursor );
+void CL_UIModule_MouseMove( bool mainContext, int frameTime, int dx, int dy );
+void CL_UIModule_MouseSet( bool mainContext, int mx, int my, bool showCursor );
+bool CL_UIModule_MouseHover( bool mainContext );
 
 //
 // cl_serverlist.c
@@ -560,8 +556,11 @@ void CL_CheckDownloadTimeout( void );
 //
 void SCR_InitScreen( void );
 void SCR_ShutdownScreen( void );
-void SCR_EnableQuickMenu( bool enable );
-bool SCR_IsQuickMenuShown( void );
+void SCR_ShowOverlay( bool enable, bool showCursor );
+bool SCR_HaveOverlay( void );
+bool SCR_OverlayHover( void );
+void SCR_OverlayKeyEvent( int key, bool down );
+void SCR_OverlayMouseMove( int x, int y, bool abs );
 void SCR_UpdateScreen( void );
 void SCR_BeginLoadingPlaque( void );
 void SCR_EndLoadingPlaque( void );

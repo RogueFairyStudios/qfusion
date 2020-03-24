@@ -28,6 +28,14 @@ extern "C" {
 // global preprocessor defines
 #include "config.h"
 
+#ifndef __STDC_FORMAT_MACROS
+#define __STDC_FORMAT_MACROS 1
+#endif
+
+#ifndef __STDC_LIMIT_MACROS
+#define __STDC_LIMIT_MACROS 1
+#endif
+
 // q_shared.h -- included first by ALL program modules
 #include <assert.h>
 #include <ctype.h>
@@ -44,12 +52,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-
-#ifndef __STDC_FORMAT_MACROS
-#define __STDC_FORMAT_MACROS 1
-#endif
 #include <inttypes.h>
-
 
 #ifdef __cplusplus
 };
@@ -132,7 +135,6 @@ extern "C" {
 
 #define VID_INITFIRST
 
-#define MUMBLE_SUPPORT
 #define OPENAL_RUNTIME
 
 // FIXME: move these to CMakeLists.txt
@@ -143,7 +145,6 @@ extern "C" {
 #define LIBOGG_LIBNAME "libogg-0.dll|libogg.dll"
 #define LIBVORBIS_LIBNAME "libvorbis-0.dll|libvorbis.dll|vorbis.dll"
 #define LIBVORBISFILE_LIBNAME "libvorbisfile-3.dll|libvorbisfile.dll|vorbisfile.dll"
-#define LIBTHEORA_LIBNAME "libtheora-0.dll|libtheora.dll"
 #define LIBFREETYPE_LIBNAME "libfreetype-6.dll|freetype6.dll"
 
 #ifdef NDEBUG
@@ -158,13 +159,10 @@ extern "C" {
 
 #ifdef _M_IX86
 #define CPUSTRING "x86"
-#define ARCH "x86"
 #elif defined ( __x86_64__ ) || defined( _M_AMD64 )
 #define CPUSTRING "x64"
-#define ARCH "x64"
 #elif defined ( _M_ALPHA )
 #define CPUSTRING "axp"
-#define ARCH      "axp"
 #endif
 
 // doh, some compilers need a _ prefix for variables so they can be
@@ -180,7 +178,7 @@ extern "C" {
 #endif
 
 #ifdef __GNUC__
-#define HAVE_TYPEOF
+#define HAVE___TYPEOF__
 #endif
 
 #include <malloc.h>
@@ -192,116 +190,7 @@ typedef unsigned long ioctl_param_t;
 
 typedef uintptr_t socket_handle_t;
 
-#endif
-
-//==============================================
-
-#if defined ( __linux__ ) || defined ( __FreeBSD__ )
-
-#define HAVE_INLINE
-
-#ifndef HAVE_STRCASECMP // SDL_config.h seems to define this too...
-#define HAVE_STRCASECMP
-#endif
-
-#define HAVE_TYPEOF
-
-#define LIB_DIRECTORY "libs"
-#define LIB_PREFIX "lib"
-#define LIB_SUFFIX ".so"
-
-#ifndef __ANDROID__
-#define MUMBLE_SUPPORT
-#define OPENAL_RUNTIME
-#endif
-
-// FIXME: move these to CMakeLists.txt
-#define LIBZ_LIBNAME "libz.so.1|libz.so"
-#define LIBCURL_LIBNAME "libcurl.so.4|libcurl.so.3|libcurl.so"
-#define LIBPNG_LIBNAME "libpng16.so.16|libpng15.so.15|libpng14.so.14|libpng12.so.0|libpng.so"
-#define LIBJPEG_LIBNAME "libjpeg.so.8|libjpeg.so"
-#define LIBOGG_LIBNAME "libogg.so.0|libogg.so"
-#define LIBVORBIS_LIBNAME "libvorbis.so.0|libvorbis.so"
-#define LIBVORBISFILE_LIBNAME "libvorbisfile.so.3|libvorbisfile.so"
-#define LIBTHEORA_LIBNAME "libtheora.so.0|libtheora.so"
-#define LIBFREETYPE_LIBNAME "libfreetype.so.6|libfreetype.so"
-
-#if defined ( __FreeBSD__ )
-#define BUILDSTRING "FreeBSD"
-#define OSNAME "FreeBSD"
-#elif defined ( __ANDROID__ )
-#define BUILDSTRING "Android"
-#define OSNAME "Android"
-#else
-#define BUILDSTRING "Linux"
-#define OSNAME "Linux"
-#endif
-
-#define STEAMQUERY_OS 'l'
-
-#ifdef __i386__
-#if defined ( __FreeBSD__ )
-#define ARCH "freebsd_i386"
-#define CPUSTRING "i386"
-#elif defined ( __ANDROID__ )
-#define ARCH "android_x86"
-#define CPUSTRING "i386"
-#else
-#define ARCH "i386"
-#define CPUSTRING "i386"
-#endif
-#elif defined ( __x86_64__ )
-#if defined __FreeBSD__
-#define ARCH "freebsd_x86_64"
-#define CPUSTRING "x86_64"
-#else
-#define ARCH "x86_64"
-#define CPUSTRING "x86_64"
-#endif
-#elif defined ( __powerpc__ )
-#define ARCH "ppc"
-#define CPUSTRING "ppc"
-#elif defined ( __alpha__ )
-#define ARCH "axp"
-#define CPUSTRING "axp"
-#elif defined ( __arm__ )
-#if defined ( __ANDROID__ )
-#define ARCH "android_armeabi-v7a"
-#define CPUSTRING "arm"
-#else
-#define ARCH "arm"
-#define CPUSTRING "arm"
-#endif
-#elif defined ( _MIPS_ARCH )
-#if defined ( __ANDROID__ )
-#define ARCH "android_mips"
-#define CPUSTRING "mips"
-#else
-#define ARCH "mips"
-#define CPUSTRING "mips"
-#endif
-#else
-#define CPUSTRING "Unknown"
-#define ARCH "Unknown"
-#endif
-
-#define VAR( x ) # x
-
-#include <alloca.h>
-
-// wsw : aiwa : 64bit integers and integer-pointer types
-typedef int ioctl_param_t;
-
-typedef int socket_handle_t;
-
-#define SOCKET_ERROR ( -1 )
-#define INVALID_SOCKET ( -1 )
-
-#endif
-
-//==============================================
-
-#if defined ( __APPLE__ ) && defined ( __MACH__ )
+#elif defined ( __APPLE__ ) && defined ( __MACH__ )
 
 #ifndef __MACOSX__
 #define __MACOSX__
@@ -313,13 +202,8 @@ typedef int socket_handle_t;
 #define HAVE_STRCASECMP
 #endif
 
-//#define HAVE_TYPEOF
+//#define HAVE___TYPEOF__
 
-#define LIB_DIRECTORY "libs"
-#define LIB_PREFIX "lib"
-#define LIB_SUFFIX ".dylib"
-
-#define MUMBLE_SUPPORT
 #define OPENAL_RUNTIME
 
 // FIXME: move these to CMakeLists.txt
@@ -330,20 +214,72 @@ typedef int socket_handle_t;
 #define LIBOGG_LIBNAME "libogg.0.dylib|libogg.dylib"
 #define LIBVORBIS_LIBNAME "libvorbis.dylib"
 #define LIBVORBISFILE_LIBNAME "libvorbisfile.dylib"
-#define LIBTHEORA_LIBNAME "libtheora.0.dylib|libtheora.dylib"
 #define LIBFREETYPE_LIBNAME "libfreetype.6.dylib|libfreetype.dylib"
 
-//Mac OSX has universal binaries, no need for cpu dependency
-#define BUILDSTRING "MacOSX"
-#define OSNAME "MacOSX"
 #define STEAMQUERY_OS 'o'
-#define CPUSTRING "universal"
-#define ARCH "mac"
 
 #define VAR( x ) # x
 
 #include <alloca.h>
 
+typedef int ioctl_param_t;
+
+typedef int socket_handle_t;
+
+#define SOCKET_ERROR ( -1 )
+#define INVALID_SOCKET ( -1 )
+
+#else
+
+#define HAVE_INLINE
+
+#ifndef HAVE_STRCASECMP // SDL_config.h seems to define this too...
+#define HAVE_STRCASECMP
+#endif
+
+#define HAVE___TYPEOF__
+
+#ifndef __ANDROID__
+#define OPENAL_RUNTIME
+#endif
+
+// FIXME: move these to CMakeLists.txt
+#define LIBZ_LIBNAME "libz.so.1|libz.so"
+#define LIBCURL_LIBNAME "libcurl.so.4|libcurl.so.3|libcurl.so"
+#define LIBPNG_LIBNAME "libpng16.so.16|libpng15.so.15|libpng14.so.14|libpng12.so.0|libpng.so"
+#define LIBJPEG_LIBNAME "libjpeg.so.8|libjpeg.so"
+#define LIBOGG_LIBNAME "libogg.so.0|libogg.so"
+#define LIBVORBIS_LIBNAME "libvorbis.so.0|libvorbis.so"
+#define LIBVORBISFILE_LIBNAME "libvorbisfile.so.3|libvorbisfile.so"
+#define LIBFREETYPE_LIBNAME "libfreetype.so.6|libfreetype.so"
+
+#if defined ( __ANDROID__ )
+#define BUILDSTRING "Android"
+#define OSNAME "Android"
+#define LIB_DIRECTORY "libs"
+#define LIB_PREFIX "lib"
+#define LIB_SUFFIX ".so"
+#endif
+
+#define STEAMQUERY_OS 'l'
+
+#if defined ( __ANDROID__ )
+#ifdef __i386__
+#define CPUSTRING "i386"
+#elif defined ( __arm__ )
+#define CPUSTRING "arm"
+#elif defined ( _MIPS_ARCH )
+#define CPUSTRING "mips"
+#endif
+#endif
+
+#define VAR( x ) # x
+
+#if defined ( __linux__ )
+#include <alloca.h>
+#endif
+
+// wsw : aiwa : 64bit integers and integer-pointer types
 typedef int ioctl_param_t;
 
 typedef int socket_handle_t;
@@ -464,16 +400,12 @@ typedef int socket_handle_t;
 #define strtoull _strtoi64
 #endif
 
-#ifdef ALIGN
-#undef ALIGN
-#endif
-
 // the ALIGN macro as defined by Linux kernel
-#ifdef HAVE_TYPEOF
-#define __ALIGN_MASK( x,mask )    ( ( ( x ) + ( mask ) ) & ~( mask ) )
-#define ALIGN( x,a )              __ALIGN_MASK( x,( typeof( x ) )( a ) - 1 )
+#ifdef HAVE___TYPEOF__
+#define Q_ALIGN_MASK( x,mask )      ( ( ( x ) + ( mask ) ) & ~( mask ) )
+#define Q_ALIGN( x,a )              Q_ALIGN_MASK( x,( __typeof__( x ) )( a ) - 1 )
 #else
-#define ALIGN( x, a ) ( ( ( x ) + ( ( size_t )( a ) - 1 ) ) & ~( ( size_t )( a ) - 1 ) )
+#define Q_ALIGN( x, a ) ( ( ( x ) + ( ( size_t )( a ) - 1 ) ) & ~( ( size_t )( a ) - 1 ) )
 #endif
 
 #ifdef _M_AMD64

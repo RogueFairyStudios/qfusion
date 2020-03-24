@@ -54,6 +54,10 @@ static inline void CL_GameModule_CM_TransformedBoxTrace( trace_t *tr, vec3_t sta
 	CM_TransformedBoxTrace( cl.cms, tr, start, end, mins, maxs, cmodel, brushmask, origin, angles );
 }
 
+static inline void CL_GameModule_CM_RoundUpToHullSize( vec3_t mins, vec3_t maxs, struct cmodel_s *cmodel ) {
+	CM_RoundUpToHullSize( cl.cms, mins, maxs, cmodel );
+}
+
 static inline struct cmodel_s *CL_GameModule_CM_InlineModel( int num ) {
 	return CM_InlineModel( cl.cms, num );
 }
@@ -143,12 +147,9 @@ static int CL_GameModule_NET_GetCurrentUserCmdNum( void ) {
 * CL_GameModule_NET_GetCurrentState
 */
 static void CL_GameModule_NET_GetCurrentState( int64_t *incomingAcknowledged, int64_t *outgoingSequence, int64_t *outgoingSent ) {
-	if( incomingAcknowledged )
-#ifdef TCP_ALLOW_CONNECT
-	{ *incomingAcknowledged = cls.ucmdHead;}
-#else
-	{ *incomingAcknowledged = cls.ucmdAcknowledged;}
-#endif
+	if( incomingAcknowledged ) {
+		*incomingAcknowledged = cls.ucmdAcknowledged;
+	}
 	if( outgoingSequence ) {
 		*outgoingSequence = cls.ucmdHead;
 	}
@@ -462,6 +463,7 @@ void CL_GameModule_Init( void ) {
 	import.CM_NumInlineModels = CL_GameModule_CM_NumInlineModels;
 	import.CM_InlineModel = CL_GameModule_CM_InlineModel;
 	import.CM_TransformedBoxTrace = CL_GameModule_CM_TransformedBoxTrace;
+	import.CM_RoundUpToHullSize = CL_GameModule_CM_RoundUpToHullSize;
 	import.CM_TransformedPointContents = CL_GameModule_CM_TransformedPointContents;
 	import.CM_ModelForBBox = CL_GameModule_CM_ModelForBBox;
 	import.CM_OctagonModelForBBox = CL_GameModule_CM_OctagonModelForBBox;
@@ -497,12 +499,14 @@ void CL_GameModule_Init( void ) {
 	import.SCR_FontAdvance = SCR_FontAdvance;
 	import.SCR_FontXHeight = SCR_FontXHeight;
 	import.SCR_SetDrawCharIntercept = SCR_SetDrawCharIntercept;
+	import.SCR_DrawChat = Con_DrawChat;
 	import.SCR_strWidth = SCR_strWidth;
 	import.SCR_StrlenForWidth = SCR_StrlenForWidth;
-	import.SCR_EnableQuickMenu = SCR_EnableQuickMenu;
-	import.SCR_HaveQuickMenu = CL_UIModule_HaveQuickMenu;
-	import.SCR_IsQuickMenuShown = SCR_IsQuickMenuShown;
-	import.SCR_DrawChat = Con_DrawChat;
+	import.SCR_ShowOverlay = SCR_ShowOverlay;
+	import.SCR_HaveOverlay = SCR_HaveOverlay;
+	import.SCR_OverlayHover = SCR_OverlayHover;
+	import.SCR_OverlayKeyEvent = SCR_OverlayKeyEvent;
+	import.SCR_OverlayMouseMove = SCR_OverlayMouseMove;
 
 	import.AsyncStream_UrlEncode = AsyncStream_UrlEncode;
 	import.AsyncStream_UrlDecode = AsyncStream_UrlDecode;
@@ -522,6 +526,8 @@ void CL_GameModule_Init( void ) {
 	import.IN_IME_GetCandidates = IN_IME_GetCandidates;
 	import.IN_SupportedDevices = IN_SupportedDevices;
 
+	import.asGetAngelExport = Com_asGetAngelExport;
+
 	if( builtinAPIfunc ) {
 		cge = builtinAPIfunc( &import );
 	} else {
@@ -540,8 +546,6 @@ void CL_GameModule_Init( void ) {
 	}
 
 	CL_GameModule_AsyncStream_Init();
-
-	SCR_EnableQuickMenu( false );
 
 	start = Sys_Milliseconds();
 	cge->Init( cls.servername, cl.playernum,
@@ -614,17 +618,6 @@ void CL_GameModule_ConfigString( int number, const char *value ) {
 }
 
 /*
-* CL_GameModule_GetSensitivityScale
-*/
-float CL_GameModule_GetSensitivityScale( float sens, float zoomSens ) {
-	if( cge ) {
-		return cge->GetSensitivityScale( sens, zoomSens );
-	} else {
-		return 1.0f;
-	}
-}
-
-/*
 * CL_GameModule_NewSnapshot
 */
 bool CL_GameModule_NewSnapshot( int pendingSnapshot ) {
@@ -652,9 +645,9 @@ void CL_GameModule_RenderView( float stereo_separation ) {
 /*
 * CL_GameModule_InputFrame
 */
-void CL_GameModule_InputFrame( int frameTime ) {
+void CL_GameModule_InputFrame( int64_t inputTime ) {
 	if( cge ) {
-		cge->InputFrame( frameTime );
+		cge->InputFrame( inputTime );
 	}
 }
 
@@ -702,6 +695,16 @@ void CL_GameModule_MouseMove( int dx, int dy ) {
 	if( cge ) {
 		cge->MouseMove( dx, dy );
 	}
+}
+
+/*
+* CL_GameModule_KeyEvent
+*/
+bool CL_GameModule_KeyEvent( int key, bool down ) {
+	if( cge ) {
+		return cge->KeyEvent( key, down );
+	}
+	return false;
 }
 
 /*

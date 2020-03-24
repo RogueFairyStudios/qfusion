@@ -32,7 +32,6 @@ cvar_t *vid_xpos;          // X coordinate of window position
 cvar_t *vid_ypos;          // Y coordinate of window position
 cvar_t *vid_fullscreen;
 cvar_t *vid_borderless;
-cvar_t *vid_displayfrequency;
 cvar_t *vid_multiscreen_head;
 cvar_t *vid_parentwid;      // parent window identifier
 cvar_t *win_noalttab;
@@ -55,6 +54,8 @@ static bool vid_ref_active;
 static bool vid_initialized;
 static bool vid_app_active;
 static bool vid_app_minimized;
+static bool vid_ref_changing;
+static int  vid_ref_req_width, vid_ref_req_height;
 
 static void     *vid_ref_libhandle = NULL;
 static mempool_t *vid_ref_mempool = NULL;
@@ -75,6 +76,7 @@ void VID_EnableWinKeys( bool enable );
 * cause the entire video mode and refresh DLL to be reset on the next frame.
 */
 void VID_Restart( bool verbose, bool soundRestart ) {
+	vid_ref_changing = false;
 	vid_ref_modified = true;
 	vid_ref_verbose = verbose;
 	vid_ref_sound_restart = soundRestart;
@@ -167,23 +169,22 @@ bool VID_RefreshIsActive( void ) {
 ** VID_GetWindowWidth
 */
 int VID_GetWindowWidth( void ) {
-	return viddef.width;
+	return vid_ref_changing ? vid_ref_req_width : viddef.width;
 }
 
 /*
 ** VID_GetWindowHeight
 */
 int VID_GetWindowHeight( void ) {
-	return viddef.height;
+	return vid_ref_changing ? vid_ref_req_height : viddef.height;
 }
 
 /*
-** VID_ChangeMode
+** VID_ChangeMode_
 */
-static rserr_t VID_ChangeMode( void ) {
+static rserr_t VID_ChangeMode_( void ) {
 	int x, y;
 	int w, h;
-	int disp_freq;
 	bool fs;
 	bool borderless;
 	rserr_t err;
@@ -191,7 +192,6 @@ static rserr_t VID_ChangeMode( void ) {
 
 	vid_fullscreen->modified = false;
 
-	disp_freq = vid_displayfrequency->integer;
 	borderless = vid_borderless->integer != 0;
 	stereo = Cvar_Value( "cl_stereo" ) != 0;
 	fs = vid_fullscreen->integer != 0;
@@ -209,11 +209,14 @@ static rserr_t VID_ChangeMode( void ) {
 		h = vid_height->integer;
 	}
 
+	vid_ref_req_width = w;
+	vid_ref_req_height = h;
+
 	if( vid_ref_active && ( w != (int)viddef.width || h != (int)viddef.height ) ) {
 		return rserr_restart_required;
 	}
 
-	err = re.SetMode( x, y, w, h, disp_freq, fs, stereo, borderless );
+	err = re.SetMode( x, y, w, h, fs, stereo, borderless );
 
 	if( err == rserr_ok ) {
 		// store fallback mode
@@ -242,7 +245,7 @@ static rserr_t VID_ChangeMode( void ) {
 			vid_fullscreen->modified = false;
 			fs = false;
 
-			err = re.SetMode( x, y, w, h, disp_freq, false, stereo, borderless );
+			err = re.SetMode( x, y, w, h, false, stereo, borderless );
 		}
 
 		if( err == rserr_invalid_mode ) {
@@ -254,7 +257,7 @@ static rserr_t VID_ChangeMode( void ) {
 			Cvar_ForceSet( vid_height->name, va( "%i", h ) );
 
 			// try setting it back to something safe
-			err = re.SetMode( x, y, w, h, disp_freq, fs, stereo, borderless );
+			err = re.SetMode( x, y, w, h, fs, stereo, borderless );
 			if( err == rserr_invalid_fullscreen ) {
 				Com_Printf( "VID_ChangeMode() - could not revert to safe fullscreen mode\n" );
 
@@ -262,7 +265,7 @@ static rserr_t VID_ChangeMode( void ) {
 				vid_fullscreen->modified = false;
 				fs = false;
 
-				err = re.SetMode( x, y, w, h, disp_freq, false, stereo, borderless );
+				err = re.SetMode( x, y, w, h, false, stereo, borderless );
 			}
 			if( err != rserr_ok ) {
 				Com_Printf( "VID_ChangeMode() - could not revert to safe mode\n" );
@@ -275,6 +278,18 @@ static rserr_t VID_ChangeMode( void ) {
 		VID_NewWindow( w, h );
 	}
 
+	return err;
+}
+
+/*
+** VID_ChangeMode
+*/
+static rserr_t VID_ChangeMode( void ) {
+	rserr_t err;
+
+	vid_ref_changing = true;
+	err = VID_ChangeMode_();
+	vid_ref_changing = false;
 	return err;
 }
 
@@ -409,9 +424,9 @@ static bool VID_LoadRefresh( const char *name ) {
 	import.BufPipe_ReadCmds = QBufPipe_ReadCmds;
 	import.BufPipe_Wait = QBufPipe_Wait;
 
-	file_size = strlen( LIB_DIRECTORY "/" LIB_PREFIX ) + strlen( name ) + 1 + strlen( ARCH ) + strlen( LIB_SUFFIX ) + 1;
+	file_size = strlen( LIB_DIRECTORY "/" LIB_PREFIX ) + strlen( name ) + strlen( LIB_SUFFIX ) + 1;
 	file = Mem_TempMalloc( file_size );
-	Q_snprintfz( file, file_size, LIB_DIRECTORY "/" LIB_PREFIX "%s_" ARCH LIB_SUFFIX, name );
+	Q_snprintfz( file, file_size, LIB_DIRECTORY "/" LIB_PREFIX "%s" LIB_SUFFIX, name );
 
 	// load dynamic library
 	Com_Printf( "Loading refresh module %s... ", name );
@@ -439,7 +454,7 @@ static bool VID_LoadRefresh( const char *name ) {
 			return false;
 		}
 	} else {
-		Com_Printf( "Not found %s.\n", va( LIB_DIRECTORY "/" LIB_PREFIX "%s_" ARCH LIB_SUFFIX, name ) );
+		Com_Printf( "Not found %s.\n", va( LIB_DIRECTORY "/" LIB_PREFIX "%s" LIB_SUFFIX, name ) );
 		return false;
 	}
 
@@ -456,7 +471,6 @@ static bool VID_LoadRefresh( const char *name ) {
 */
 void VID_CheckChanges( void ) {
 	rserr_t err;
-	bool vid_ref_was_active = vid_ref_active;
 	bool verbose = vid_ref_verbose || vid_ref_sound_restart;
 
 	if( win_noalttab->modified ) {
@@ -613,39 +627,42 @@ load_refresh:
 
 		vid_ref_active = true;
 
-		// stop and free all sounds
-		CL_SoundModule_Init( verbose );
-
-		re.BeginRegistration();
-		CL_SoundModule_BeginRegistration();
-
 		FTLIB_PrecacheFonts( verbose );
 
 		// load common localization strings
 		L10n_LoadLangPOFile( "common", "l10n" );
 
-		if( vid_ref_was_active ) {
+		// stop and free all sounds
+		CL_SoundModule_Init( verbose );
+
+		if( cls.state != CA_UNINITIALIZED ) {
+			re.BeginRegistration();
+			CL_SoundModule_BeginRegistration();
+
 			IN_Restart();
-		}
 
-		CL_InitMedia();
+			CL_InitMedia();
 
-		cls.disable_screen = 0;
+			cls.disable_screen = 0;
 
-		Con_Close();
-
-		if( cgameActive ) {
-			CL_GameModule_Init();
 			Con_Close();
-			CL_UIModule_ForceMenuOff();
-			CL_SetKeyDest( key_game );
-		} else {
-			CL_UIModule_ForceMenuOn();
-			CL_SetKeyDest( key_menu );
-		}
 
-		re.EndRegistration();
-		CL_SoundModule_EndRegistration();
+			if( cgameActive ) {
+				CL_GameModule_Init();
+				Con_Close();
+				CL_UIModule_ForceMenuOff();
+				CL_SetKeyDest( key_game );
+
+				// this will precache game assets
+				SCR_UpdateScreen();
+			} else {
+				CL_UIModule_ForceMenuOn();
+				CL_SetKeyDest( key_menu );
+			}
+
+			re.EndRegistration();
+			CL_SoundModule_EndRegistration();
+		}
 
 		vid_ref_modified = false;
 		vid_ref_verbose = true;
@@ -654,12 +671,21 @@ load_refresh:
 	/*
 	** update our window position
 	*/
-	if( vid_xpos->modified || vid_ypos->modified ) {
-		if( !vid_fullscreen->integer && !vid_borderless->integer ) {
+	if( !vid_fullscreen->integer ) {
+		if( vid_xpos->modified || vid_ypos->modified ) {
+			// make sure the titlebar is not completely hidden away
+			if( vid_xpos->integer < 8 ) {
+				Cvar_ForceSet( vid_xpos->name, "8" );
+			}
+			if( vid_ypos->integer < 8 ) {
+				Cvar_ForceSet( vid_ypos->name, "8" );
+			}
+
 			VID_UpdateWindowPosAndSize( vid_xpos->integer, vid_ypos->integer );
+	
+			vid_xpos->modified = false;
+			vid_ypos->modified = false;
 		}
-		vid_xpos->modified = false;
-		vid_ypos->modified = false;
 	}
 }
 
@@ -714,7 +740,7 @@ void VID_Init( void ) {
 
 	VID_InitModes();
 
-	/* Create the video variables so we know how to start the graphics drivers */
+	// Create the video variables so we know how to start the graphics drivers
 	vid_ref = Cvar_Get( "vid_ref", VID_DEFAULTREF, CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
 	vid_width = Cvar_Get( "vid_width", "0", CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
 	vid_height = Cvar_Get( "vid_height", "0", CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
@@ -722,18 +748,25 @@ void VID_Init( void ) {
 	vid_ypos = Cvar_Get( "vid_ypos", "0", CVAR_ARCHIVE );
 	vid_fullscreen = Cvar_Get( "vid_fullscreen", "1", CVAR_ARCHIVE );
 	vid_borderless = Cvar_Get( "vid_borderless", "1", CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
-	vid_displayfrequency = Cvar_Get( "vid_displayfrequency", "0", CVAR_ARCHIVE | CVAR_LATCH_VIDEO );
 	vid_multiscreen_head = Cvar_Get( "vid_multiscreen_head", "-1", CVAR_ARCHIVE );
 	vid_parentwid = Cvar_Get( "vid_parentwid", "0", CVAR_NOSET );
 
 	win_noalttab = Cvar_Get( "win_noalttab", "0", CVAR_ARCHIVE );
 	win_nowinkeys = Cvar_Get( "win_nowinkeys", "0", CVAR_ARCHIVE );
 
-	/* Add some console commands that we want to handle */
+	// Add some console commands that we want to handle
 	Cmd_AddCommand( "vid_restart", VID_Restart_f );
 	Cmd_AddCommand( "vid_modelist", VID_ModeList_f );
 
-	/* Start the graphics mode and load refresh DLL */
+	// make sure the titlebar is not completely hidden away
+	if( vid_xpos->integer < 8 ) {
+		Cvar_ForceSet( vid_xpos->name, "8" );
+	}
+	if( vid_ypos->integer < 8 ) {
+		Cvar_ForceSet( vid_ypos->name, "8" );
+	}
+
+	// Start the graphics mode and load refresh DLL
 	vid_ref_modified = true;
 	vid_ref_active = false;
 	vid_ref_verbose = true;
@@ -741,6 +774,8 @@ void VID_Init( void ) {
 	vid_ref_sound_restart = false;
 	vid_fullscreen->modified = false;
 	vid_borderless->modified = false;
+	vid_xpos->modified = true;
+	vid_ypos->modified = true;
 	vid_ref_prevwidth = vid_modes[0].width; // the smallest mode is the "safe mode"
 	vid_ref_prevheight = vid_modes[0].height;
 

@@ -85,15 +85,9 @@ void UpdateConnectScreen( const char *serverName, const char *rejectmessage,
 	}
 }
 
-void Keydown( int context, int key ) {
+void KeyEvent( int context, int key, bool down ) {
 	if( ui_main ) {
-		ui_main->keyEvent( context, key, true );
-	}
-}
-
-void Keyup( int context, int key ) {
-	if( ui_main ) {
-		ui_main->keyEvent( context, key, false );
+		ui_main->keyEvent( context, key, down );
 	}
 }
 
@@ -113,6 +107,13 @@ void MouseMove( int context, int frameTime, int dx, int dy ) {
 	if( ui_main ) {
 		ui_main->mouseMove( context, frameTime, dx, dy, false, true );
 	}
+}
+
+bool MouseHover( int context ) {
+	if( ui_main ) {
+		return ui_main->mouseHover( context );
+	}
+	return false;
 }
 
 void MouseSet( int context, int mx, int my, bool showCursor ) {
@@ -149,15 +150,15 @@ void ForceMenuOff( void ) {
 	}
 }
 
-void ShowQuickMenu( bool show ) {
+void ShowOverlayMenu( bool show, bool showCursor ) {
 	if( ui_main ) {
-		ui_main->showQuickMenu( show );
+		ui_main->showOverlayMenu( show, showCursor );
 	}
 }
 
-bool HaveQuickMenu( void ) {
+bool HaveOverlayMenu( void ) {
 	if( ui_main ) {
-		return ui_main->haveQuickMenu();
+		return ui_main->haveOverlayMenu();
 	}
 	return false;
 }
@@ -187,18 +188,18 @@ ui_export_t *GetUIAPI( ui_import_t *import ) {
 	globals.Refresh = WSWUI::Refresh;
 	globals.UpdateConnectScreen = WSWUI::UpdateConnectScreen;
 
-	globals.Keydown = WSWUI::Keydown;
-	globals.Keyup = WSWUI::Keyup;
+	globals.KeyEvent = WSWUI::KeyEvent;
 	globals.CharEvent = WSWUI::CharEvent;
 	globals.MouseMove = WSWUI::MouseMove;
+	globals.MouseHover = WSWUI::MouseHover;
 	globals.MouseSet = WSWUI::MouseSet;
 	globals.TouchEvent = WSWUI::TouchEvent;
 	globals.IsTouchDown = WSWUI::IsTouchDown;
 	globals.CancelTouches = WSWUI::CancelTouches;
 
 	globals.ForceMenuOff = WSWUI::ForceMenuOff;
-	globals.ShowQuickMenu = WSWUI::ShowQuickMenu;
-	globals.HaveQuickMenu = WSWUI::HaveQuickMenu;
+	globals.ShowOverlayMenu = WSWUI::ShowOverlayMenu;
+	globals.HaveOverlayMenu = WSWUI::HaveOverlayMenu;
 
 	globals.AddToServerList = WSWUI::AddToServerList;
 

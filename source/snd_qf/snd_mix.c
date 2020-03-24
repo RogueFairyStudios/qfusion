@@ -166,10 +166,10 @@ static void S_WriteLinearBlastStereo16( void ) {
 
 	for( i = 0; i < snd_linear_count; i += 2 ) {
 		val = snd_p[i] >> 8;
-		snd_out[i] = bound( (short)0x8000, val, 0x7fff );
+		snd_out[i] = Q_bound( (short)0x8000, val, 0x7fff );
 
 		val = snd_p[i + 1] >> 8;
-		snd_out[i + 1] = bound( (short)0x8000, val, 0x7fff );
+		snd_out[i + 1] = Q_bound( (short)0x8000, val, 0x7fff );
 	}
 }
 
@@ -179,10 +179,10 @@ static void S_WriteSwappedLinearBlastStereo16( void ) {
 
 	for( i = 0; i < snd_linear_count; i += 2 ) {
 		val = snd_p[i + 1] >> 8;
-		snd_out[i] = bound( (short)0x8000, val, 0x7fff );
+		snd_out[i] = Q_bound( (short)0x8000, val, 0x7fff );
 
 		val = snd_p[i] >> 8;
-		snd_out[i + 1] = bound( (short)0x8000, val, 0x7fff );
+		snd_out[i + 1] = Q_bound( (short)0x8000, val, 0x7fff );
 	}
 #ifdef _MSC_VER
 #pragma warning( pop )
@@ -410,7 +410,7 @@ int S_PaintChannels( unsigned int endtime, int dumpfile, float gain ) {
 		}
 
 		// paint in the channels.
-		ch = channels;
+		ch = s_channels;
 		for( i = 0; i < MAX_CHANNELS; i++, ch++ ) {
 			ltime = paintedtime;
 
@@ -458,9 +458,6 @@ int S_PaintChannels( unsigned int endtime, int dumpfile, float gain ) {
 					if( ch->autosound ) { // autolooping sounds always go back to start
 						ch->pos = 0;
 						ch->end = ltime + sc->length;
-					} else if( sc->loopstart < sc->length ) {
-						ch->pos = sc->loopstart;
-						ch->end = ltime + sc->length - ch->pos;
 					} else {   // channel just stopped
 						ch->sfx = NULL;
 					}

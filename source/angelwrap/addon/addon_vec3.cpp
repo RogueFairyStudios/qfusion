@@ -21,6 +21,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "../qas_precompiled.h"
 #include "addon_vec3.h"
+#include "addon_mat3.h"
+#include "addon_scriptarray.h"
 
 // CLASS: Vec3
 void objectVec3_DefaultConstructor( asvec3_t *self ) {
@@ -33,28 +35,29 @@ void objectVec3_Constructor3F( float x, float y, float z, asvec3_t *self ) {
 	self->v[2] = z;
 }
 
-void objectVec3_Constructor1F( float v, asvec3_t *self ) {
-	self->v[0] = self->v[1] = self->v[2] = v;
-}
-
 void objectVec3_CopyConstructor( asvec3_t *other, asvec3_t *self ) {
 	self->v[0] = other->v[0];
 	self->v[1] = other->v[1];
 	self->v[2] = other->v[2];
 }
 
+void objectVec3_ConstructorArray( CScriptArrayInterface &arr, asvec3_t *self )
+{
+	if( arr.GetSize() != 3 ) {
+		asIScriptContext *ctx = asGetActiveContext();
+		if( ctx ) {
+			ctx->SetException( "Invalid array size" );
+		}
+		return;
+	}
+
+	for( unsigned int i = 0; i < 3; i++ ) {
+		self->v[i] = *( (float *)arr.At( i ) );
+	}
+}
+
 static asvec3_t *objectVec3_AssignBehaviour( asvec3_t *other, asvec3_t *self ) {
 	VectorCopy( other->v, self->v );
-	return self;
-}
-
-static asvec3_t *objectVec3_AssignBehaviourD( float other, asvec3_t *self ) {
-	VectorSet( self->v, other, other, other );
-	return self;
-}
-
-static asvec3_t *objectVec3_AssignBehaviourI( int other, asvec3_t *self ) {
-	VectorSet( self->v, other, other, other );
 	return self;
 }
 
@@ -144,12 +147,20 @@ static bool objectVec3_EqualBehaviour( asvec3_t *first, asvec3_t *second ) {
 	return VectorCompare( first->v, second->v );
 }
 
+static void objectVec3_Clear( asvec3_t *vec ) {
+	VectorClear( vec->v );
+}
+
 static void objectVec3_Set( float x, float y, float z, asvec3_t *vec ) {
 	VectorSet( vec->v, x, y, z );
 }
 
 static float objectVec3_Length( const asvec3_t *vec ) {
 	return VectorLength( vec->v );
+}
+
+static float objectVec3_LengthSquared( const asvec3_t *vec ) {
+	return DotProduct( vec->v, vec->v );
 }
 
 static float objectVec3_Normalize( asvec3_t *vec ) {
@@ -182,6 +193,36 @@ static void objectVec3_MakeNormalVectors( asvec3_t *r, asvec3_t *u, asvec3_t *se
 	MakeNormalVectors( self->v, r->v, u->v );
 }
 
+static void objectVec3_AnglesToMatrix3( asmat3_t *res, asvec3_t *self )
+{
+	Matrix3_FromAngles( self->v, res->m );
+}
+
+static float *objectVec3_Index( unsigned index, asvec3_t *self ) {
+	if( index > 2 ) {
+		asIScriptContext *ctx = asGetActiveContext();
+		if( ctx ) {
+			ctx->SetException( "Index out of bounds" );
+		}
+		return NULL;
+	}
+	return &self->v[index];
+}
+
+static CScriptArrayInterface *objectVec3_VecToArray( unsigned index, asvec3_t *self )
+{
+	asIScriptContext *ctx = asGetActiveContext();
+	asIScriptEngine *engine = ctx->GetEngine();
+	asIObjectType *ot = engine->GetObjectTypeById( engine->GetTypeIdByDecl( "array<float>" ) );
+	CScriptArrayInterface *arr = QAS_NEW( CScriptArray )( 3, ot );
+
+	for( int i = 0; i < 3; i++ ){
+		*( (float *)arr->At( i ) ) = self->v[i];
+	}
+
+	return arr;
+}
+
 void PreRegisterVec3Addon( asIScriptEngine *engine ) {
 	int r;
 
@@ -197,15 +238,13 @@ void RegisterVec3Addon( asIScriptEngine *engine ) {
 	// register object behaviours
 	r = engine->RegisterObjectBehaviour( "Vec3", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION( objectVec3_DefaultConstructor ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectBehaviour( "Vec3", asBEHAVE_CONSTRUCT, "void f(float x, float y, float z)", asFUNCTION( objectVec3_Constructor3F ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
-	r = engine->RegisterObjectBehaviour( "Vec3", asBEHAVE_CONSTRUCT, "void f(float v)", asFUNCTION( objectVec3_Constructor1F ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectBehaviour( "Vec3", asBEHAVE_CONSTRUCT, "void f(const Vec3 &in)", asFUNCTION( objectVec3_CopyConstructor ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
+	r = engine->RegisterObjectBehaviour( "Vec3", asBEHAVE_CONSTRUCT, "void f(const array<float> &)", asFUNCTION( objectVec3_ConstructorArray ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 
 	// register object methods
 
 	// assignments
 	r = engine->RegisterObjectMethod( "Vec3", "Vec3 &opAssign(Vec3 &in)", asFUNCTION( objectVec3_AssignBehaviour ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
-	r = engine->RegisterObjectMethod( "Vec3", "Vec3 &opAssign(int)", asFUNCTION( objectVec3_AssignBehaviourI ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
-	r = engine->RegisterObjectMethod( "Vec3", "Vec3 &opAssign(float)", asFUNCTION( objectVec3_AssignBehaviourD ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectMethod( "Vec3", "Vec3 &opAddAssign(Vec3 &in)", asFUNCTION( objectVec3_AddAssignBehaviour ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectMethod( "Vec3", "Vec3 &opSubAssign(Vec3 &in)", asFUNCTION( objectVec3_SubAssignBehaviour ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectMethod( "Vec3", "Vec3 &opMulAssign(Vec3 &in)", asFUNCTION( objectVec3_MulAssignBehaviour ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
@@ -226,14 +265,23 @@ void RegisterVec3Addon( asIScriptEngine *engine ) {
 	// == !=
 	r = engine->RegisterObjectMethod( "Vec3", "bool opEquals(const Vec3 &in) const", asFUNCTION( objectVec3_EqualBehaviour ), asCALL_CDECL_OBJFIRST ); assert( r >= 0 );
 
+	r = engine->RegisterObjectMethod( "Vec3", "void clear()", asFUNCTION( objectVec3_Clear ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectMethod( "Vec3", "void set(float x, float y, float z)", asFUNCTION( objectVec3_Set ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectMethod( "Vec3", "float length() const", asFUNCTION( objectVec3_Length ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
-	r = engine->RegisterObjectMethod( "Vec3", "float normalize() const", asFUNCTION( objectVec3_Normalize ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
+	r = engine->RegisterObjectMethod( "Vec3", "float lengthSquared() const", asFUNCTION( objectVec3_LengthSquared ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
+	r = engine->RegisterObjectMethod( "Vec3", "float normalize()", asFUNCTION( objectVec3_Normalize ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectMethod( "Vec3", "float distance(const Vec3 &in) const", asFUNCTION( objectVec3_Distance ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectMethod( "Vec3", "void angleVectors(Vec3 &out, Vec3 &out, Vec3 &out) const", asFUNCTION( objectVec3_AngleVectors ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectMethod( "Vec3", "Vec3 toAngles() const", asFUNCTION( objectVec3_VecToAngles ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectMethod( "Vec3", "Vec3 perpendicular() const", asFUNCTION( objectVec3_Perpendicular ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
 	r = engine->RegisterObjectMethod( "Vec3", "void makeNormalVectors(Vec3 &out, Vec3 &out) const", asFUNCTION( objectVec3_MakeNormalVectors ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
+	r = engine->RegisterObjectMethod( "Vec3", "void anglesToMarix(Mat3 &out) const", asFUNCTION( objectVec3_AnglesToMatrix3 ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
+	r = engine->RegisterObjectMethod( "Vec3", "float &opIndex(uint)", asFUNCTION( objectVec3_Index ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
+	r = engine->RegisterObjectMethod( "Vec3", "const float &opIndex(uint) const", asFUNCTION( objectVec3_Index ), asCALL_CDECL_OBJLAST ); assert( r >= 0 );
+
+	r = engine->RegisterObjectMethod( "Vec3", "array<float> @toArray()", asFUNCTION( objectVec3_VecToArray ), asCALL_CDECL_OBJLAST );
+
+	assert( r >= 0 );
 
 	// properties
 	r = engine->RegisterObjectProperty( "Vec3", "float x", asOFFSET( asvec3_t, v[0] ) ); assert( r >= 0 );

@@ -165,7 +165,7 @@ void SV_Demo_Start_f( void ) {
 	Q_snprintfz( svs.demo.tempname, demofilename_size, "%s.rec", svs.demo.filename );
 
 	// open it
-	if( FS_FOpenFile( svs.demo.tempname, &svs.demo.file, FS_WRITE | SNAP_DEMO_GZ ) == -1 ) {
+	if( FS_FOpenFile( svs.demo.tempname, &svs.demo.file, FS_WRITE ) == -1 ) {
 		Com_Printf( "Error: Couldn't open file: %s\n", svs.demo.tempname );
 		Mem_ZoneFree( svs.demo.filename );
 		svs.demo.filename = NULL;
@@ -492,7 +492,7 @@ void SV_DemoGet_f( client_t *client ) {
 		} else {
 			num = atoi( Cmd_Argv( 1 ) ) - 1;
 		}
-		clamp( num, 0, numdemos - 1 );
+		Q_clamp( num, 0, numdemos - 1 );
 
 		numdemos = FS_GetFileList( SV_DEMO_DIR, APP_DEMO_EXTENSION_STR, buffer, sizeof( buffer ), num, num + 1 );
 		if( numdemos ) {

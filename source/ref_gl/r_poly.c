@@ -25,7 +25,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 /*
 * R_BatchPolySurf
 */
-void R_BatchPolySurf( const entity_t *e, const shader_t *shader, const mfog_t *fog, const portalSurface_t *portalSurface, unsigned int shadowBits, drawSurfacePoly_t *poly ) {
+void R_BatchPolySurf( const entity_t *e, const shader_t *shader, const mfog_t *fog, 
+	int lightStyleNum, const portalSurface_t *portalSurface, drawSurfacePoly_t *poly, bool mergable ) {
 	mesh_t mesh;
 
 	mesh.elems = poly->elems;
@@ -40,7 +41,7 @@ void R_BatchPolySurf( const entity_t *e, const shader_t *shader, const mfog_t *f
 	mesh.colorsArray[1] = NULL;
 	mesh.sVectorsArray = NULL;
 
-	RB_AddDynamicMesh( e, shader, fog, portalSurface, shadowBits, &mesh, GL_TRIANGLES, 0.0f, 0.0f );
+	RB_AddDynamicMesh( e, shader, fog, portalSurface, &mesh, GL_TRIANGLES, 0.0f, 0.0f );
 }
 
 /*
@@ -89,7 +90,7 @@ void R_DrawPolys( void ) {
 		}
 		e->renderfx = p->renderfx;
 
-		if( !R_AddSurfToDrawList( rn.meshlist, e, fog, p->shader, 0, i, NULL, p ) ) {
+		if( !R_AddSurfToDrawList( rn.meshlist, e, p->shader, fog, -1, 0, i, NULL, p ) ) {
 			continue;
 		}
 	}
@@ -135,7 +136,7 @@ void R_DrawStretchPoly( const poly_t *poly, float x_offset, float y_offset ) {
 		mesh.xyzArray = translated;
 	}
 
-	RB_AddDynamicMesh( NULL, poly->shader, NULL, NULL, 0, &mesh, GL_TRIANGLES, x_offset, y_offset );
+	RB_AddDynamicMesh( NULL, poly->shader, NULL, NULL, &mesh, GL_TRIANGLES, x_offset, y_offset );
 }
 
 //==================================================================================
@@ -425,12 +426,14 @@ bool R_SurfPotentiallyFragmented( const msurface_t *surf ) {
 */
 static void R_RecursiveFragmentNode( void ) {
 	unsigned i;
+	unsigned si;
 	int stackdepth = 0;
 	float dist;
 	bool inside;
 	mnode_t *node, *localstack[2048];
 	mleaf_t *leaf;
 	msurface_t *surf;
+	int *surfFragmentFrames = rsh.worldBrushModel->surfFragmentFrames;
 
 	for( node = rsh.worldBrushModel->nodes, stackdepth = 0; node != NULL; ) {
 		if( node->plane == NULL ) {
@@ -441,13 +444,15 @@ static void R_RecursiveFragmentNode( void ) {
 					return; // already reached the limit
 
 				}
-				surf = rsh.worldBrushModel->surfaces + leaf->fragmentSurfaces[i];
-				if( surf->fragmentframe == r_fragmentframecount ) {
+
+				si = leaf->fragmentSurfaces[i];
+				surf = rsh.worldBrushModel->surfaces + si;
+				if( surfFragmentFrames[si] == r_fragmentframecount ) {
 					continue;
 				}
-				surf->fragmentframe = r_fragmentframecount;
+				surfFragmentFrames[si] = r_fragmentframecount;
 
-				if( !BoundsAndSphereIntersect( surf->mins, surf->maxs, fragmentOrigin, fragmentRadius ) ) {
+				if( !BoundsOverlapSphere( surf->mins, surf->maxs, fragmentOrigin, fragmentRadius ) ) {
 					continue;
 				}
 

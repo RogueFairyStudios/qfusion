@@ -19,7 +19,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "r_local.h"
-#include "../qalgo/half_float.h"
+#include "mhf.h"
 
 /*
 =========================================================
@@ -87,6 +87,53 @@ void R_InitVBO( void ) {
 }
 
 /*
+* R_AllocVBO
+*/
+static mesh_vbo_t *R_AllocVBO( void ) {
+	vbohandle_t *vboh = NULL;
+	mesh_vbo_t *vbo = NULL;
+
+	if( !r_free_vbohandles ) {
+		return NULL;
+	}
+
+	vboh = r_free_vbohandles;
+	vbo = &r_mesh_vbo[vboh->index];
+	memset( vbo, 0, sizeof( *vbo ) );
+	vbo->index = vboh->index + 1;
+	r_free_vbohandles = vboh->next;
+
+	// link to the list of active vbo handles
+	vboh->prev = &r_vbohandles_headnode;
+	vboh->next = r_vbohandles_headnode.next;
+	vboh->next->prev = vboh;
+	vboh->prev->next = vboh;
+
+	r_num_active_vbos++;
+
+	return vbo;
+}
+
+/*
+* R_UnlinkVBO
+*/
+static void R_UnlinkVBO( mesh_vbo_t *vbo ) {
+	if( vbo->index >= 1 && vbo->index <= MAX_MESH_VERTEX_BUFFER_OBJECTS ) {
+		vbohandle_t *vboh = &r_vbohandles[vbo->index - 1];
+
+		// remove from linked active list
+		vboh->prev->next = vboh->next;
+		vboh->next->prev = vboh->prev;
+
+		// insert into linked free list
+		vboh->next = r_free_vbohandles;
+		r_free_vbohandles = vboh;
+
+		r_num_active_vbos--;
+	}
+}
+
+/*
 * R_CreateMeshVBO
 *
 * Create two static buffer objects: vertex buffer and elements buffer, the real
@@ -99,7 +146,6 @@ mesh_vbo_t *R_CreateMeshVBO( void *owner, int numVerts, int numElems, int numIns
 	int i;
 	size_t size;
 	GLuint vbo_id;
-	vbohandle_t *vboh = NULL;
 	mesh_vbo_t *vbo = NULL;
 	GLenum usage = VBO_USAGE_FOR_TAG( tag );
 	size_t vertexSize;
@@ -109,7 +155,8 @@ mesh_vbo_t *R_CreateMeshVBO( void *owner, int numVerts, int numElems, int numIns
 		return NULL;
 	}
 
-	if( !r_free_vbohandles ) {
+	vbo = R_AllocVBO();
+	if( !vbo ) {
 		return NULL;
 	}
 
@@ -127,10 +174,6 @@ mesh_vbo_t *R_CreateMeshVBO( void *owner, int numVerts, int numElems, int numIns
 		// when uploading instances data
 		halfFloatVattribs &= ~VATTRIB_INSTANCES_BITS;
 	}
-
-	vboh = r_free_vbohandles;
-	vbo = &r_mesh_vbo[vboh->index];
-	memset( vbo, 0, sizeof( *vbo ) );
 
 	// vertex data
 	vertexSize = 0;
@@ -199,6 +242,13 @@ mesh_vbo_t *R_CreateMeshVBO( void *owner, int numVerts, int numElems, int numIns
 		assert( !( vertexSize & 3 ) );
 		vbo->bonesWeightsOffset = vertexSize;
 		vertexSize += sizeof( int );
+	} else {
+		// surface index
+		if( vattribs & VATTRIB_SURFINDEX_BIT ) {
+			assert( !( vertexSize & 3 ) );
+			vbo->siOffset = vertexSize;
+			vertexSize += FLOAT_VATTRIB_SIZE( VATTRIB_SURFINDEX_BIT, halfFloatVattribs );
+		}
 	}
 
 	// autosprites
@@ -211,7 +261,6 @@ mesh_vbo_t *R_CreateMeshVBO( void *owner, int numVerts, int numElems, int numIns
 	}
 
 	size = vertexSize * numVerts;
-
 
 	// instances data
 	if( ( ( vattribs & VATTRIB_INSTANCES_BITS ) == VATTRIB_INSTANCES_BITS ) &&
@@ -253,26 +302,73 @@ mesh_vbo_t *R_CreateMeshVBO( void *owner, int numVerts, int numElems, int numIns
 	}
 
 	vbo->elemBufferSize = size;
-
-	r_free_vbohandles = vboh->next;
-
-	// link to the list of active vbo handles
-	vboh->prev = &r_vbohandles_headnode;
-	vboh->next = r_vbohandles_headnode.next;
-	vboh->next->prev = vboh;
-	vboh->prev->next = vboh;
-
-	r_num_active_vbos++;
-
 	vbo->registrationSequence = rsh.registrationSequence;
 	vbo->vertexSize = vertexSize;
 	vbo->numVerts = numVerts;
 	vbo->numElems = numElems;
 	vbo->owner = owner;
-	vbo->index = vboh->index + 1;
 	vbo->tag = tag;
 	vbo->vertexAttribs = vattribs;
 	vbo->halfFloatAttribs = halfFloatVattribs;
+	vbo->vertsVbo = NULL;
+
+	return vbo;
+
+error:
+	if( vbo ) {
+		R_ReleaseMeshVBO( vbo );
+	}
+
+	return NULL;
+}
+
+/*
+* R_CreateElemsVBO
+*/
+mesh_vbo_t *R_CreateElemsVBO( void *owner, mesh_vbo_t *vertsVbo, int numElems, vbo_tag_t tag ) {
+	int index;
+	mesh_vbo_t *vbo;
+	GLuint vbo_id;
+	size_t size;
+	GLenum usage = VBO_USAGE_FOR_TAG( tag );
+
+	if( !glConfig.ext.vertex_buffer_object ) {
+		return NULL;
+	}
+
+	if( !vertsVbo || !vertsVbo->vertexId ) {
+		return NULL;
+	}
+
+	vbo = R_AllocVBO();
+	if( !vbo ) {
+		return NULL;
+	}
+
+	// pre-allocate elements buffer
+	vbo_id = 0;
+	qglGenBuffersARB( 1, &vbo_id );
+	if( !vbo_id ) {
+		goto error;
+	}
+
+	size = numElems * sizeof( elem_t );
+	qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, vbo_id );
+	qglBufferDataARB( GL_ELEMENT_ARRAY_BUFFER_ARB, size, NULL, usage );
+	if( qglGetError() == GL_OUT_OF_MEMORY ) {
+		goto error;
+	}
+
+	index = vbo->index;
+	*vbo = *vertsVbo;
+	vbo->index = index;
+	vbo->elemId = vbo_id;
+	vbo->elemBufferSize = size;
+	vbo->registrationSequence = rsh.registrationSequence;
+	vbo->numElems = numElems;
+	vbo->owner = owner;
+	vbo->tag = tag;
+	vbo->vertsVbo = vertsVbo;
 
 	return vbo;
 
@@ -288,7 +384,14 @@ error:
 * R_TouchMeshVBO
 */
 void R_TouchMeshVBO( mesh_vbo_t *vbo ) {
+	if( !vbo ) {
+		return;
+	}
+
 	vbo->registrationSequence = rsh.registrationSequence;
+	if( vbo->vertsVbo ) {
+		R_TouchMeshVBO( vbo->vertsVbo );
+	}
 }
 
 /*
@@ -312,9 +415,12 @@ void R_ReleaseMeshVBO( mesh_vbo_t *vbo ) {
 	qglBindBufferARB( GL_ARRAY_BUFFER_ARB, 0 );
 	qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, 0 );
 
-	if( vbo->vertexId ) {
-		vbo_id = vbo->vertexId;
-		qglDeleteBuffersARB( 1, &vbo_id );
+	// check if it's a real vertex VBO
+	if( vbo->vertsVbo == NULL ) {
+		if( vbo->vertexId ) {
+			vbo_id = vbo->vertexId;
+			qglDeleteBuffersARB( 1, &vbo_id );
+		}
 	}
 
 	if( vbo->elemId ) {
@@ -322,19 +428,7 @@ void R_ReleaseMeshVBO( mesh_vbo_t *vbo ) {
 		qglDeleteBuffersARB( 1, &vbo_id );
 	}
 
-	if( vbo->index >= 1 && vbo->index <= MAX_MESH_VERTEX_BUFFER_OBJECTS ) {
-		vbohandle_t *vboh = &r_vbohandles[vbo->index - 1];
-
-		// remove from linked active list
-		vboh->prev->next = vboh->next;
-		vboh->next->prev = vboh->prev;
-
-		// insert into linked free list
-		vboh->next = r_free_vbohandles;
-		r_free_vbohandles = vboh;
-
-		r_num_active_vbos--;
-	}
+	R_UnlinkVBO( vbo );
 
 	memset( vbo, 0, sizeof( *vbo ) );
 	vbo->tag = VBO_TAG_NONE;
@@ -366,9 +460,9 @@ int R_GetNumberOfActiveVBOs( void ) {
 		} \
 	}
 
-R_FillVertexBuffer_f( float, float, );
-R_FillVertexBuffer_f( float, GLhalfARB, Com_FloatToHalf );
-R_FillVertexBuffer_f( int, int, );
+R_FillVertexBuffer_f( float, float, )
+R_FillVertexBuffer_f( float, GLhalfARB, _mesa_float_to_half )
+R_FillVertexBuffer_f( int, int, )
 #define R_FillVertexBuffer_float_or_half( gl_type,in,size,stride,numVerts,out ) \
 	do { \
 		if( gl_type == GL_HALF_FLOAT ) { \
@@ -389,7 +483,7 @@ R_FillVertexBuffer_f( int, int, );
 * VATTRIB_POSITION_BIT is not set, it will also reset bits for other positional
 * attributes such as autosprite pos and instance pos.
 */
-vattribmask_t R_FillVBOVertexDataBuffer( mesh_vbo_t *vbo, vattribmask_t vattribs, const mesh_t *mesh, void *outData ) {
+vattribmask_t R_FillVBOVertexDataBuffer( mesh_vbo_t *vbo, vattribmask_t vattribs, const mesh_t *mesh, void *outData, int surfIndex ) {
 	int i, j;
 	unsigned numVerts;
 	size_t vertSize;
@@ -535,26 +629,29 @@ vattribmask_t R_FillVBOVertexDataBuffer( mesh_vbo_t *vbo, vattribmask_t vattribs
 		const int edges[3][2] = { { 1, 0 }, { 2, 0 }, { 2, 1 } };
 		vec4_t centre[4];
 		vec4_t axes[4];
-		vec4_t *verts = mesh->xyzArray;
+		vec4_t *verts = NULL;
 		const elem_t *elems = mesh->elems, trifanElems[6] = { 0, 1, 2, 0, 2, 3 };
-		int numQuads;
+		int numQuads = 0;
 		size_t bufferOffset0 = vbo->spritePointsOffset;
 		size_t bufferOffset1 = vbo->sVectorsOffset;
 
 		assert( ( mesh->elems && mesh->numElems ) || ( numVerts == 4 ) );
-		if( mesh->elems && mesh->numElems ) {
-			numQuads = mesh->numElems / 6;
 
-			// protect against bogus autosprite2 meshes
-			if( numQuads > mesh->numVerts / 4 ) {
-				numQuads = mesh->numVerts / 4;
+		if( mesh->xyzArray ) {
+			verts = mesh->xyzArray;
+
+			if( mesh->elems && mesh->numElems ) {
+				numQuads = mesh->numElems / 6;
+
+				// protect against bogus autosprite2 meshes
+				if( numQuads > mesh->numVerts / 4 ) {
+					numQuads = mesh->numVerts / 4;
+				}
+			} else if( numVerts == 4 ) {
+				// single quad as triangle fan
+				numQuads = 1;
+				elems = trifanElems;
 			}
-		} else if( numVerts == 4 ) {
-			// single quad as triangle fan
-			numQuads = 1;
-			elems = trifanElems;
-		} else {
-			numQuads = 0;
 		}
 
 		for( i = 0; i < numQuads; i++, elems += 6 ) {
@@ -616,17 +713,14 @@ vattribmask_t R_FillVBOVertexDataBuffer( mesh_vbo_t *vbo, vattribmask_t vattribs
 			bufferOffset1 += 4 * vertSize;
 		}
 	} else if( vbo->spritePointsOffset && ( ( vattribs & VATTRIB_AUTOSPRITE_BIT ) == VATTRIB_AUTOSPRITE_BIT ) ) {
-		vec4_t *verts;
+		vec4_t *verts = NULL;
 		vec4_t centre[4];
-		int numQuads;
+		int numQuads = 0;
 		size_t bufferOffset = vbo->spritePointsOffset;
 
 		if( mesh->xyzArray ) {
 			verts = mesh->xyzArray;
 			numQuads = numVerts / 4;
-		} else {
-			verts = NULL;
-			numQuads = 0;
 		}
 
 		for( i = 0; i < numQuads; i++ ) {
@@ -650,7 +744,7 @@ vattribmask_t R_FillVBOVertexDataBuffer( mesh_vbo_t *vbo, vattribmask_t vattribs
 		}
 	}
 
-	if( vattribs & VATTRIB_BONES_BITS ) {
+	if( ( vattribs & VATTRIB_BONES_BITS ) == VATTRIB_BONES_BITS ) {
 		if( vbo->bonesIndicesOffset ) {
 			if( !mesh->blendIndices ) {
 				errMask |= VATTRIB_BONESINDICES_BIT;
@@ -667,6 +761,21 @@ vattribmask_t R_FillVBOVertexDataBuffer( mesh_vbo_t *vbo, vattribmask_t vattribs
 				R_FillVertexBuffer( int, int,
 									(int *)&mesh->blendWeights[0],
 									1, vertSize, numVerts, data + vbo->bonesWeightsOffset );
+			}
+		}
+	} else {
+		if( vattribs & VATTRIB_SURFINDEX_BIT ) {
+			if( !vbo->siOffset ) {
+				errMask |= VATTRIB_SURFINDEX_BIT;
+			} else {
+				float fsurfIndex = surfIndex;
+				size_t bufferOffset = vbo->siOffset;
+
+				for( i = 0; i < mesh->numVerts; i++ ) {
+					R_FillVertexBuffer_float_or_half( FLOAT_VATTRIB_GL_TYPE( VATTRIB_SURFINDEX_BIT, hfa ),
+						&fsurfIndex, 1, vertSize, 1, data + bufferOffset );
+					bufferOffset += vertSize;
+				}
 			}
 		}
 	}
@@ -694,7 +803,7 @@ void R_UploadVBOVertexRawData( mesh_vbo_t *vbo, int vertsOffset, int numVerts, c
 /*
 * R_UploadVBOVertexData
 */
-vattribmask_t R_UploadVBOVertexData( mesh_vbo_t *vbo, int vertsOffset, vattribmask_t vattribs, const mesh_t *mesh ) {
+vattribmask_t R_UploadVBOVertexData( mesh_vbo_t *vbo, int vertsOffset, vattribmask_t vattribs, const mesh_t *mesh, int surfIndex ) {
 	void *data;
 	vattribmask_t errMask;
 
@@ -709,7 +818,7 @@ vattribmask_t R_UploadVBOVertexData( mesh_vbo_t *vbo, int vertsOffset, vattribma
 	}
 
 	data = R_VBOVertBuffer( mesh->numVerts, vbo->vertexSize );
-	errMask = R_FillVBOVertexDataBuffer( vbo, vattribs, mesh, data );
+	errMask = R_FillVBOVertexDataBuffer( vbo, vattribs, mesh, data, surfIndex );
 	R_UploadVBOVertexRawData( vbo, vertsOffset, mesh->numVerts, data );
 	return errMask;
 }

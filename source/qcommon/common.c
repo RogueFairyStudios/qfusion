@@ -29,11 +29,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "../qalgo/md5.h"
 #include "../qcommon/cjson.h"
 #include "../matchmaker/mm_common.h"
-#include "compression.h"
 
 #define MAX_NUM_ARGVS   50
 
-static bool dynvars_initialized = false;
 static bool commands_intialized = false;
 
 static int com_argc;
@@ -49,7 +47,6 @@ cvar_t *developer;
 cvar_t *timescale;
 cvar_t *dedicated;
 cvar_t *versioncvar;
-cvar_t *tv_server;
 
 static cvar_t *fixedtime;
 static cvar_t *logconsole = NULL;
@@ -75,26 +72,6 @@ int64_t time_before_game;
 int64_t time_after_game;
 int64_t time_before_ref;
 int64_t time_after_ref;
-
-/*
-==============================================================
-
-DYNVARS
-
-==============================================================
-*/
-
-static dynvar_get_status_t Com_Sys_Uptime_f( void **val ) {
-	static char buf[32];
-	const uint64_t us = Sys_Microseconds();
-	const unsigned int h = us / 3600000000u;
-	const unsigned int min = ( us / 60000000 ) % 60;
-	const unsigned int sec = ( us / 1000000 ) % 60;
-	const unsigned int usec = us % 1000000;
-	sprintf( buf, "%02u:%02u:%02u.%06u", h, min, sec, usec );
-	*val = buf;
-	return DYNVAR_GET_OK;
-}
 
 /*
 ============================================================================
@@ -585,118 +562,6 @@ void Com_FreePureList( purelist_t **purelist ) {
 
 //============================================================================
 
-static unsigned int com_CPUFeatures = 0xFFFFFFFF;
-
-static inline int CPU_haveCPUID() {
-	int has_CPUID = 0;
-#if defined( __GNUC__ ) && defined( i386 )
-	has_CPUID = __get_cpuid_max( 0, NULL ) ? 1 : 0;
-#elif defined( _MSC_VER ) && defined( _M_IX86 )
-	__asm {
-		pushfd                  ; Get original EFLAGS
-		pop eax
-		mov ecx, eax
-		xor eax, 200000h        ; Flip ID bit in EFLAGS
-		push eax                ; Save new EFLAGS value on stack
-		popfd                   ; Replace current EFLAGS value
-		pushfd                  ; Get new EFLAGS
-		pop eax                 ; Store new EFLAGS in EAX
-		xor eax, ecx            ; Can not toggle ID bit,
-		jz done                 ; Processor = 80486
-		mov has_CPUID,1         ; We have CPUID support
-done:
-	}
-#endif
-	return has_CPUID;
-}
-
-static inline unsigned CPU_getCPUIDFeatures() {
-	unsigned features = 0;
-#if defined( __GNUC__ ) && defined( i386 )
-	if( __get_cpuid_max( 0, NULL ) >= 1 ) {
-		unsigned temp, temp2, temp3;
-		__get_cpuid( 1, &temp, &temp2, &temp3, &features );
-	}
-#elif defined( _MSC_VER ) && defined( _M_IX86 )
-	__asm {
-		xor eax, eax            ; Set up for CPUID instruction
-		cpuid                   ; Get and save vendor ID
-		cmp eax, 1              ; Make sure 1 is valid input for CPUID
-		jl done                 ; We dont have the CPUID instruction
-		xor eax, eax
-		inc eax
-		cpuid                   ; Get family / model / stepping / features
-		mov features, edx
-done:
-	}
-#endif
-	return features;
-}
-
-static inline unsigned CPU_getCPUIDFeaturesExt() {
-	unsigned features = 0;
-#if defined( __GNUC__ ) && defined( i386 )
-	if( __get_cpuid_max( 0x80000000, NULL ) >= 0x80000001 ) {
-		unsigned temp, temp2, temp3;
-		__get_cpuid( 0x80000001, &temp, &temp2, &temp3, &features );
-	}
-#elif defined( _MSC_VER ) && defined( _M_IX86 )
-	__asm {
-		mov eax,80000000h       ; Query for extended functions
-		cpuid                   ; Get extended function limit
-		cmp eax,80000001h
-		jl done                 ; Nope, we dont have function 800000001h
-		mov eax,80000001h       ; Setup extended function 800000001h
-		cpuid                   ; and get the information
-		mov features,edx
-done:
-	}
-#endif
-	return features;
-}
-
-/*
-* COM_CPUFeatures
-*
-* CPU features detection code, taken from SDL
-*/
-unsigned int COM_CPUFeatures( void ) {
-	if( com_CPUFeatures == 0xFFFFFFFF ) {
-		com_CPUFeatures = 0;
-
-		if( CPU_haveCPUID() ) {
-			int CPUIDFeatures = CPU_getCPUIDFeatures();
-			int CPUIDFeaturesExt = CPU_getCPUIDFeaturesExt();
-
-			if( CPUIDFeatures & 0x00000010 ) {
-				com_CPUFeatures |= QCPU_HAS_RDTSC;
-			}
-			if( CPUIDFeatures & 0x00800000 ) {
-				com_CPUFeatures |= QCPU_HAS_MMX;
-			}
-			if( CPUIDFeaturesExt & 0x00400000 ) {
-				com_CPUFeatures |= QCPU_HAS_MMXEXT;
-			}
-			if( CPUIDFeaturesExt & 0x80000000 ) {
-				com_CPUFeatures |= QCPU_HAS_3DNOW;
-			}
-			if( CPUIDFeaturesExt & 0x40000000 ) {
-				com_CPUFeatures |= QCPU_HAS_3DNOWEXT;
-			}
-			if( CPUIDFeatures & 0x02000000 ) {
-				com_CPUFeatures |= QCPU_HAS_SSE;
-			}
-			if( CPUIDFeatures & 0x04000000 ) {
-				com_CPUFeatures |= QCPU_HAS_SSE2;
-			}
-		}
-	}
-
-	return com_CPUFeatures;
-}
-
-//========================================================
-
 void Key_Init( void );
 void Key_Shutdown( void );
 void SCR_EndLoadingPlaque( void );
@@ -829,16 +694,13 @@ void Qcommon_Init( int argc, char **argv ) {
 
 	Cbuf_Init();
 
-	// initialize cmd/cvar/dynvar tries
+	// initialize cmd/cvar tries
 	Cmd_PreInit();
 	Cvar_PreInit();
-	Dynvar_PreInit();
 
 	// create basic commands and cvars
 	Cmd_Init();
 	Cvar_Init();
-	Dynvar_Init();
-	dynvars_initialized = true;
 
 	wswcurl_init();
 
@@ -851,18 +713,6 @@ void Qcommon_Init( int argc, char **argv ) {
 	Cbuf_AddEarlyCommands( false );
 	Cbuf_Execute();
 
-	// wsw : aiwa : create dynvars (needs to be completed before .cfg scripts are executed)
-	Dynvar_Create( "sys_uptime", true, Com_Sys_Uptime_f, DYNVAR_READONLY );
-
-	Sys_InitDynvars();
-
-#ifdef TV_SERVER_ONLY
-	tv_server = Cvar_Get( "tv_server", "1", CVAR_NOSET );
-	Cvar_ForceSet( "tv_server", "1" );
-#else
-	tv_server = Cvar_Get( "tv_server", "0", CVAR_NOSET );
-#endif
-
 #ifdef DEDICATED_ONLY
 	dedicated =     Cvar_Get( "dedicated", "1", CVAR_NOSET );
 	Cvar_ForceSet( "dedicated", "1" );
@@ -871,16 +721,12 @@ void Qcommon_Init( int argc, char **argv ) {
 #endif
 	developer =     Cvar_Get( "developer", "0", 0 );
 
-	Com_LoadCompressionLibraries();
-
 	FS_Init();
 
 	Cbuf_AddText( "exec default.cfg\n" );
 	if( !dedicated->integer ) {
 		Cbuf_AddText( "exec config.cfg\n" );
 		Cbuf_AddText( "exec autoexec.cfg\n" );
-	} else if( tv_server->integer ) {
-		Cbuf_AddText( "exec tvserver_autoexec.cfg\n" );
 	} else {
 		Cbuf_AddText( "exec dedicated_autoexec.cfg\n" );
 	}
@@ -898,9 +744,7 @@ void Qcommon_Init( int argc, char **argv ) {
 	host_speeds =       Cvar_Get( "host_speeds", "0", 0 );
 	timescale =     Cvar_Get( "timescale", "1.0", CVAR_CHEAT );
 	fixedtime =     Cvar_Get( "fixedtime", "0", CVAR_CHEAT );
-	if( tv_server->integer ) {
-		logconsole =        Cvar_Get( "logconsole", "tvconsole.log", CVAR_ARCHIVE );
-	} else if( dedicated->integer ) {
+	if( dedicated->integer ) {
 		logconsole =        Cvar_Get( "logconsole", "wswconsole.log", CVAR_ARCHIVE );
 	} else {
 		logconsole =        Cvar_Get( "logconsole", "", CVAR_ARCHIVE );
@@ -939,8 +783,6 @@ void Qcommon_Init( int argc, char **argv ) {
 
 	if( !dedicated->integer ) {
 		Cbuf_AddText( "exec autoexec_postinit.cfg\n" );
-	} else if( tv_server->integer ) {
-		Cbuf_AddText( "exec tvserver_autoexec_postinit.cfg\n" );
 	} else {
 		Cbuf_AddText( "exec dedicated_autoexec_postinit.cfg\n" );
 	}
@@ -1091,12 +933,8 @@ void Qcommon_Shutdown( void ) {
 
 	FS_Shutdown();
 
-	Com_UnloadCompressionLibraries();
-
 	wswcurl_cleanup();
 
-	Dynvar_Shutdown();
-	dynvars_initialized = false;
 	Cvar_Shutdown();
 	Cmd_Shutdown();
 	Cbuf_Shutdown();

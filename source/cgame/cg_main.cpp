@@ -25,7 +25,6 @@ cg_state_t cg;
 centity_t cg_entities[MAX_EDICTS];
 
 cvar_t *cg_predict;
-cvar_t *cg_predict_optimize;
 cvar_t *cg_showMiss;
 
 cvar_t *cg_model;
@@ -92,10 +91,8 @@ cvar_t *cg_raceGhosts;
 cvar_t *cg_raceGhostsAlpha;
 cvar_t *cg_chatBeep;
 cvar_t *cg_chatFilter;
-cvar_t *cg_chatFilterTV;
 
 cvar_t *cg_cartoonEffects;
-cvar_t *cg_cartoonHitEffect;
 
 cvar_t *cg_volume_hitsound;
 cvar_t *cg_autoaction_demo;
@@ -334,31 +331,43 @@ static const char *CG_GS_GetConfigString( int index ) {
 }
 
 /*
+* CG_GS_RoundUpToHullSize
+*/
+static void CG_GS_RoundUpToHullSize( vec3_t mins, vec3_t maxs ) {
+	trap_CM_RoundUpToHullSize( mins, maxs, NULL );
+}
+
+/*
 * CG_InitGameShared
 *
 * Give gameshared access to some utilities
 */
 static void CG_InitGameShared( void ) {
 	char cstring[MAX_CONFIGSTRING_CHARS];
+	int maxclients;
+	gs_module_api_t api;
 
-	memset( &gs, 0, sizeof( gs_state_t ) );
-	gs.module = GS_MODULE_CGAME;
 	trap_GetConfigString( CS_MAXCLIENTS, cstring, MAX_CONFIGSTRING_CHARS );
-	gs.maxclients = atoi( cstring );
-	if( gs.maxclients < 1 || gs.maxclients > MAX_CLIENTS ) {
-		gs.maxclients = MAX_CLIENTS;
+	maxclients = atoi( cstring );
+	if( maxclients < 1 || maxclients > MAX_CLIENTS ) {
+		maxclients = MAX_CLIENTS;
 	}
 
-	module_PredictedEvent = CG_PredictedEvent;
-	module_Error = CG_Error;
-	module_Printf = CG_Printf;
-	module_Malloc = CG_GS_Malloc;
-	module_Free = CG_GS_Free;
-	module_Trace = CG_GS_Trace;
-	module_GetEntityState = CG_GS_GetEntityState;
-	module_PointContents = CG_GS_PointContents;
-	module_PMoveTouchTriggers = CG_Predict_TouchTriggers;
-	module_GetConfigString = CG_GS_GetConfigString;
+	memset( &api, 0, sizeof( api ) );
+	api.PredictedEvent = CG_PredictedEvent;
+	api.Error = CG_Error;
+	api.Printf = CG_Printf;
+	api.Malloc = CG_GS_Malloc;
+	api.Free = CG_GS_Free;
+	api.Trace = CG_GS_Trace;
+	api.GetEntityState = CG_GS_GetEntityState;
+	api.PointContents = CG_GS_PointContents;
+	api.PMoveTouchTriggers = CG_Predict_TouchTriggers;
+	api.RoundUpToHullSize = CG_GS_RoundUpToHullSize;
+	api.GetConfigString = CG_GS_GetConfigString;
+	api.GetAngelExport = NULL;
+
+	GS_InitModule( GS_MODULE_CGAME, maxclients, &api );
 
 	GS_InitWeapons();
 }
@@ -527,7 +536,8 @@ static void CG_RegisterModels( void ) {
 		return;
 	}
 
-	CG_RegisterMediaModels();
+	CG_PrecacheModels();
+
 	CG_RegisterBasePModel(); // never before registering the weapon models
 	CG_RegisterWeaponModels();
 
@@ -578,7 +588,7 @@ static void CG_RegisterSounds( void ) {
 		return;
 	}
 
-	CG_RegisterMediaSounds();
+	CG_PrecacheSounds();
 }
 
 /*
@@ -622,7 +632,7 @@ static void CG_RegisterShaders( void ) {
 		return;
 	}
 
-	CG_RegisterMediaShaders();
+	CG_PrecacheShaders();
 }
 
 /*
@@ -715,7 +725,6 @@ static void CG_RegisterLightStyles( void ) {
 */
 static void CG_RegisterVariables( void ) {
 	cg_predict =        trap_Cvar_Get( "cg_predict", "1", 0 );
-	cg_predict_optimize = trap_Cvar_Get( "cg_predict_optimize", "1", 0 );
 	cg_showMiss =       trap_Cvar_Get( "cg_showMiss", "0", 0 );
 
 	cg_debugPlayerModels =  trap_Cvar_Get( "cg_debugPlayerModels", "0", CVAR_CHEAT | CVAR_ARCHIVE );
@@ -786,7 +795,6 @@ static void CG_RegisterVariables( void ) {
 	cg_showSelfShadow = trap_Cvar_Get( "cg_showSelfShadow", "0", CVAR_ARCHIVE );
 
 	cg_cartoonEffects =     trap_Cvar_Get( "cg_cartoonEffects", "7", CVAR_ARCHIVE );
-	cg_cartoonHitEffect =   trap_Cvar_Get( "cg_cartoonHitEffect", "1", CVAR_ARCHIVE );
 
 	cg_damage_indicator =   trap_Cvar_Get( "cg_damage_indicator", "1", CVAR_ARCHIVE );
 	cg_damage_indicator_time =  trap_Cvar_Get( "cg_damage_indicator_time", "25", CVAR_ARCHIVE );
@@ -797,7 +805,7 @@ static void CG_RegisterVariables( void ) {
 	cg_voiceChats =     trap_Cvar_Get( "cg_voiceChats", "1", CVAR_ARCHIVE );
 	cg_shadows =        trap_Cvar_Get( "cg_shadows", "1", CVAR_ARCHIVE );
 
-	cg_laserBeamSubdivisions = trap_Cvar_Get( "cg_laserBeamSubdivisions", "10", CVAR_ARCHIVE );
+	cg_laserBeamSubdivisions = trap_Cvar_Get( "cg_laserBeamSubdivisions", STR_TOSTR( CURVELASERBEAM_SUBDIVISIONS ), CVAR_ARCHIVE );
 	cg_projectileAntilagOffset = trap_Cvar_Get( "cg_projectileAntilagOffset", "1.0", CVAR_ARCHIVE );
 
 	cg_raceGhosts =     trap_Cvar_Get( "cg_raceGhosts", "0", CVAR_ARCHIVE );
@@ -805,7 +813,6 @@ static void CG_RegisterVariables( void ) {
 
 	cg_chatBeep =       trap_Cvar_Get( "cg_chatBeep", "1", CVAR_ARCHIVE );
 	cg_chatFilter =     trap_Cvar_Get( "cg_chatFilter", "0", CVAR_ARCHIVE );
-	cg_chatFilterTV =   trap_Cvar_Get( "cg_chatFilterTV", "2", CVAR_ARCHIVE );
 
 	// developer cvars
 	developer =     trap_Cvar_Get( "developer", "0", CVAR_CHEAT );
@@ -996,21 +1003,6 @@ void CG_Precache( void ) {
 }
 
 /*
-* CG_UpdateTVServerString
-*/
-void CG_UpdateTVServerString( void ) {
-	// if we got the server settings configstring, update our local copy of the data
-	if( cgs.configStrings[CS_TVSERVER][0] ) {
-		char *settings = cgs.configStrings[CS_TVSERVER];
-
-		cgs.tv = atoi( COM_Parse( &settings ) ) == 0 ? false : true;
-		if( cgs.demoPlaying ) {
-			cgs.tv = false;     // ignore the TV bit in demos
-		}
-	}
-}
-
-/*
 * CG_RegisterConfigStrings
 */
 static void CG_RegisterConfigStrings( void ) {
@@ -1044,9 +1036,6 @@ static void CG_RegisterConfigStrings( void ) {
 
 	// backup initial configstrings for CG_Reset
 	memcpy( &cgs.baseConfigStrings[0][0], &cgs.configStrings[0][0], MAX_CONFIGSTRINGS*MAX_CONFIGSTRING_CHARS );
-
-	// if we got the server settings configstring, update our local copy of the data
-	CG_UpdateTVServerString();
 
 	GS_SetGametypeName( cgs.configStrings[CS_GAMETYPENAME] );
 
@@ -1156,10 +1145,6 @@ void CG_Init( const char *serverName, unsigned int playerNum,
 	// whether to only allow pure files
 	cgs.pure = pure == true;
 
-	// whether we are connected to a tv-server
-	cgs.tv = false;
-	cgs.tvRequested = false;
-
 	// game protocol number
 	cgs.gameProtocol = protocol;
 	cgs.snapFrameTime = snapFrameTime;
@@ -1167,7 +1152,13 @@ void CG_Init( const char *serverName, unsigned int playerNum,
 	cgs.hasGametypeMenu = false; // this will update as soon as we receive configstrings
 	cgs.gameMenuRequested = !gameStart;
 
-	CG_RefreshQuickMenu();
+	CG_asInitScriptEngine();
+
+	CG_RefreshOverlayMenu();
+
+	CG_asLoadGameScript();
+
+	CG_asLoadPMoveScript();
 
 	CG_InitInput();
 
@@ -1177,6 +1168,8 @@ void CG_Init( const char *serverName, unsigned int playerNum,
 
 	CG_ScreenInit();
 
+	CG_asHUDInit();
+
 	CG_ClearLightStyles();
 
 	CG_ClearLocalEntities();
@@ -1185,13 +1178,13 @@ void CG_Init( const char *serverName, unsigned int playerNum,
 	CG_RegisterConfigStrings();
 
 	// register fonts here so loading screen works
-	CG_RegisterFonts();
+	CG_PrecacheFonts();
 	cgs.shaderWhite = trap_R_RegisterPic( "$whiteimage" );
 
 	// l10n
 	CG_InitL10n();
 
-	CG_RegisterLevelMinimap();
+	CG_PrecacheMinimap();
 
 	CG_RegisterCGameCommands();
 	CG_RegisterLightStyles();
@@ -1219,6 +1212,8 @@ void CG_Init( const char *serverName, unsigned int playerNum,
 	CG_ConfigString( CS_AUTORECORDSTATE, cgs.configStrings[CS_AUTORECORDSTATE] );
 
 	CG_DemocamInit();
+
+	CG_Overlay_Init( &cg_overlay );
 }
 
 /*
@@ -1231,6 +1226,9 @@ void CG_Shutdown( void ) {
 	CG_UnregisterCGameCommands();
 	CG_FreeTemporaryBoneposesCache();
 	CG_ShutdownInput();
+	CG_asUnloadGameScript();
+	CG_asUnloadPMoveScript();
+	CG_asShutdownScriptEngine();
 }
 
 //======================================================================

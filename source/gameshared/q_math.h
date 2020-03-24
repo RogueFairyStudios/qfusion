@@ -115,9 +115,16 @@ extern vec4_t color_table[MAX_S_COLORS];
 #define DEG2RAD( a ) ( a * M_PI ) / 180.0F
 #define RAD2DEG( a ) ( a * 180.0F ) / M_PI
 
+// note that Q_rint was causing problems here
+// (spawn looking straight up\down at delta_angles wrapping)
 
-// returns b clamped to [a..c] range
-//#define bound(a,b,c) (max((a), min((b), (c))))
+#define ANGLE2SHORT( x )    ( (int)( ( x ) * 65536 / 360 ) & 65535 )
+#define SHORT2ANGLE( x )    ( ( x ) * ( 360.0 / 65536 ) )
+
+#define ANGLE2BYTE( x )     ( (int)( ( x ) * 256 / 360 ) & 255 )
+#define BYTE2ANGLE( x )     ( ( x ) * ( 360.0 / 256 ) )
+
+#ifndef __cplusplus
 
 #ifndef max
 #define max( a, b ) ( ( a ) > ( b ) ? ( a ) : ( b ) )
@@ -127,10 +134,12 @@ extern vec4_t color_table[MAX_S_COLORS];
 #define min( a, b ) ( ( a ) < ( b ) ? ( a ) : ( b ) )
 #endif
 
-#define bound( a, b, c ) ( ( a ) >= ( c ) ? ( a ) : ( b ) < ( a ) ? ( a ) : ( b ) > ( c ) ? ( c ) : ( b ) )
+#endif
 
 // clamps a (must be lvalue) to [b..c] range
-#define clamp( a, b, c ) ( ( b ) >= ( c ) ? ( a ) = ( b ) : ( a ) < ( b ) ? ( a ) = ( b ) : ( a ) > ( c ) ? ( a ) = ( c ) : ( a ) )
+#define Q_clamp( a, b, c ) ( ( b ) >= ( c ) ? ( a ) = ( b ) : ( a ) < ( b ) ? ( a ) = ( b ) : ( a ) > ( c ) ? ( a ) = ( c ) : ( a ) )
+
+#define Q_bound( a, b, c ) ( ( a ) >= ( c ) ? ( a ) : ( b ) < ( a ) ? ( a ) : ( b ) > ( c ) ? ( c ) : ( b ) )
 
 #define clamp_low( a, low ) ( ( a ) = ( a ) < ( low ) ? ( low ) : ( a ) )
 #define clamp_high( a, high ) ( ( a ) = ( a ) > ( high ) ? ( high ) : ( a ) )
@@ -188,10 +197,14 @@ int Q_bitcount( int v );
 #define Vector4Copy( a, b )    ( ( b )[0] = ( a )[0], ( b )[1] = ( a )[1], ( b )[2] = ( a )[2], ( b )[3] = ( a )[3] )
 #define Vector4Scale( in, scale, out )      ( ( out )[0] = ( in )[0] * scale, ( out )[1] = ( in )[1] * scale, ( out )[2] = ( in )[2] * scale, ( out )[3] = ( in )[3] * scale )
 #define Vector4Add( a, b, c )       ( ( c )[0] = ( ( ( ( a )[0] ) + ( ( b )[0] ) ) ), ( c )[1] = ( ( ( ( a )[1] ) + ( ( b )[1] ) ) ), ( c )[2] = ( ( ( ( a )[2] ) + ( ( b )[2] ) ) ), ( c )[3] = ( ( ( ( a )[3] ) + ( ( b )[3] ) ) ) )
+#define Vector4Subtract( a, b, c )       ( ( c )[0] = ( ( ( ( a )[0] ) - ( ( b )[0] ) ) ), ( c )[1] = ( ( ( ( a )[1] ) - ( ( b )[1] ) ) ), ( c )[2] = ( ( ( ( a )[2] ) - ( ( b )[2] ) ) ), ( c )[3] = ( ( ( ( a )[3] ) - ( ( b )[3] ) ) ) )
 #define Vector4Avg( a, b, c )       ( ( c )[0] = ( ( ( ( a )[0] ) + ( ( b )[0] ) ) * 0.5f ), ( c )[1] = ( ( ( ( a )[1] ) + ( ( b )[1] ) ) * 0.5f ), ( c )[2] = ( ( ( ( a )[2] ) + ( b )[2] ) ) * 0.5f ), ( c )[3] = ( ( ( ( a )[3] ) + ( ( b )[3] ) ) * 0.5f ) )
 #define Vector4Negate( a, b )      ( ( b )[0] = -( a )[0], ( b )[1] = -( a )[1], ( b )[2] = -( a )[2], ( b )[3] = -( a )[3] )
 #define Vector4Inverse( v )         ( ( v )[0] = -( v )[0], ( v )[1] = -( v )[1], ( v )[2] = -( v )[2], ( v )[3] = -( v )[3] )
 #define DotProduct4( x, y )    ( ( x )[0] * ( y )[0] + ( x )[1] * ( y )[1] + ( x )[2] * ( y )[2] + ( x )[3] * ( y )[3] )
+#define Vector4Compare( v1, v2 )    ( ( v1 )[0] == ( v2 )[0] && ( v1 )[1] == ( v2 )[1] && ( v1 )[2] == ( v2 )[2] && ( v1 )[3] == ( v2 )[3] )
+#define Vector4LengthSquared( v )    ( DotProduct4( ( v ), ( v ) ) )
+#define Vector4Length( v )     ( sqrt( Vector4LengthSquared( v ) ) )
 
 vec_t VectorNormalize( vec3_t v );       // returns vector length
 vec_t VectorNormalize2( const vec3_t v, vec3_t out );
@@ -209,10 +222,68 @@ void _VectorAdd( const vec3_t veca, const vec3_t vecb, vec3_t out );
 void _VectorCopy( const vec3_t in, vec3_t out );
 
 void ClearBounds( vec3_t mins, vec3_t maxs );
+void CopyBounds( const vec3_t inmins, const vec3_t inmaxs, vec3_t outmins, vec3_t outmaxs );
+void ClipBounds( vec3_t mins, vec3_t maxs, const vec3_t mins2, const vec3_t maxs2 );
+void UnionBounds( vec3_t mins, vec3_t maxs, const vec3_t mins2, const vec3_t maxs2 );
 void AddPointToBounds( const vec3_t v, vec3_t mins, vec3_t maxs );
 float RadiusFromBounds( const vec3_t mins, const vec3_t maxs );
-bool BoundsIntersect( const vec3_t mins1, const vec3_t maxs1, const vec3_t mins2, const vec3_t maxs2 );
-bool BoundsAndSphereIntersect( const vec3_t mins, const vec3_t maxs, const vec3_t centre, float radius );
+bool BoundsOverlap( const vec3_t mins1, const vec3_t maxs1, const vec3_t mins2, const vec3_t maxs2 );
+bool BoundsOverlapSphere( const vec3_t mins, const vec3_t maxs, const vec3_t centre, float radius );
+void BoundsFromRadius( const vec3_t centre, vec_t radius, vec3_t mins, vec3_t maxs );
+bool BoundsOverlapTriangle( const vec3_t v1, const vec3_t v2, const vec3_t v3, const vec3_t mins, const vec3_t maxs );
+bool BoundsInsideBounds( const vec3_t mins1, const vec3_t maxs1, const vec3_t mins2, const vec3_t maxs2 );
+void BoundsCentre( const vec3_t mins, const vec3_t maxs, vec3_t centre );
+float LocalBounds( const vec3_t inmins, const vec3_t inmaxs, vec3_t mins, vec3_t maxs, vec3_t centre );
+#define BoundsVolume(mins,maxs) (((maxs)[0]-(mins)[0]) * ((maxs)[1]-(mins)[1]) * ((maxs)[2]-(mins)[2]))
+void BoundsCorners( const vec3_t mins, const vec3_t maxs, vec3_t corners[8] );
+vec_t BoundsNearestDistance( const vec3_t point, const vec3_t mins, const vec3_t maxs );
+vec_t BoundsFurthestDistance( const vec3_t point, const vec3_t mins, const vec3_t maxs );
+
+// LordHavoc's triangle utility functions follow
+
+#define TriangleNormal(a,b,c,n) ( \
+	(n)[0] = ((a)[1] - (b)[1]) * ((c)[2] - (b)[2]) - ((a)[2] - (b)[2]) * ((c)[1] - (b)[1]), \
+	(n)[1] = ((a)[2] - (b)[2]) * ((c)[0] - (b)[0]) - ((a)[0] - (b)[0]) * ((c)[2] - (b)[2]), \
+	(n)[2] = ((a)[0] - (b)[0]) * ((c)[1] - (b)[1]) - ((a)[1] - (b)[1]) * ((c)[0] - (b)[0]) \
+	)
+
+/*! Fast PointInfrontOfTriangle.
+* subtracts v1 from v0 and v2, combined into a crossproduct, combined with a
+* dotproduct of the light location relative to the first point of the
+* triangle (any point works, since any triangle is obviously flat), and
+* finally a comparison to determine if the light is infront of the triangle
+* (the goal of this statement) we do not need to normalize the surface
+* normal because both sides of the comparison use it, therefore they are
+* both multiplied the same amount...  furthermore a subtract can be done on
+* the point to eliminate one dotproduct
+* this is ((p - a) * cross(a-b,c-b))
+*/
+#define PointInfrontOfTriangle(p,a,b,c) \
+( ((p)[0] - (a)[0]) * (((a)[1] - (b)[1]) * ((c)[2] - (b)[2]) - ((a)[2] - (b)[2]) * ((c)[1] - (b)[1])) \
++ ((p)[1] - (a)[1]) * (((a)[2] - (b)[2]) * ((c)[0] - (b)[0]) - ((a)[0] - (b)[0]) * ((c)[2] - (b)[2])) \
++ ((p)[2] - (a)[2]) * (((a)[0] - (b)[0]) * ((c)[1] - (b)[1]) - ((a)[1] - (b)[1]) * ((c)[0] - (b)[0])) > 0)
+
+#if 0
+// readable version, kept only for explanatory reasons
+inline int PointInfrontOfTriangle(const float *p, const float *a, const float *b, const float *c)
+{
+	float dir0[3], dir1[3], normal[3];
+
+	// calculate two mostly perpendicular edge directions
+	VectorSubtract(a, b, dir0);
+	VectorSubtract(c, b, dir1);
+
+	// we have two edge directions, we can calculate a third vector from
+	// them, which is the direction of the surface normal (its magnitude
+	// is not 1 however)
+	CrossProduct(dir0, dir1, normal);
+
+	// compare distance of light along normal, with distance of any point
+	// of the triangle along the same normal (the triangle is planar,
+	// I.E. flat, so all points give the same answer)
+	return DotProduct(p, normal) > DotProduct(a, normal);
+}
+#endif
 
 #define NUMVERTEXNORMALS    162
 int DirToByte( vec3_t dir );
@@ -239,8 +310,9 @@ vec_t ColorNormalize( const vec_t *in, vec_t *out );
 
 #define ColorGrayscale( c ) ( 0.299 * ( c )[0] + 0.587 * ( c )[1] + 0.114 * ( c )[2] )
 
-float CalcFov( float fov_x, float width, float height );
-void AdjustFov( float *fov_x, float *fov_y, float width, float height, bool lock_x );
+float WidescreenFov( float fov );
+float CalcVerticalFov( float fov_x, float width, float height );
+float CalcHorizontalFov( float fov_y, float width, float height );
 
 #define Q_sign( x ) ( ( x ) < 0 ? -1 : ( ( x ) > 0 ? 1 : 0 ) )
 #define Q_rint( x ) ( ( x ) < 0 ? ( (int)( ( x ) - 0.5f ) ) : ( (int)( ( x ) + 0.5f ) ) )
@@ -325,6 +397,23 @@ vec_t LogisticCDF( vec_t x );
 vec_t LogisticPDF( vec_t x );
 vec_t NormalCDF( vec_t x );
 vec_t NormalPDF( vec_t x );
+
+// ============================================================================
+
+#define NOISE_SIZE  256
+
+void Q_InitNoiseTable( int seed, float *noisetable, int *noiseperm );
+
+float Q_GetNoiseValueFromTable( float *noisetable, int *noiseperm, 
+	float x, float y, float z, float t );
+
+/*
+* Q_GetNoiseValue
+
+* Simplified version of Q_GetNoiseValueFromTable, to be used for general purposes.
+* NOT thread-safe!
+*/
+float Q_GetNoiseValue( float x, float y, float z, float t );
 
 #ifdef __cplusplus
 };

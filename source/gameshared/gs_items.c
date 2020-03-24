@@ -1149,7 +1149,7 @@ gsitem_t *GS_Cmd_UseItem( player_state_t *playerState, const char *string, int t
 	// we don't have this item in the inventory
 	if( !playerState->inventory[item->tag] ) {
 		if( gs.module == GS_MODULE_CGAME && !( item->type & IT_WEAPON ) ) {
-			module_Printf( "Item %s is not in inventory\n", item->name );
+			gs.api.Printf( "Item %s is not in inventory\n", item->name );
 		}
 		return NULL;
 	}
@@ -1232,7 +1232,7 @@ static gsitem_t *GS_Cmd_UseWeaponStep_f( player_state_t *playerState, int step, 
 		curSlot = playerState->stats[STAT_PENDING_WEAPON];
 	}
 
-	clamp( curSlot, 0, WEAP_TOTAL - 1 );
+	Q_clamp( curSlot, 0, WEAP_TOTAL - 1 );
 	newSlot = curSlot;
 	do {
 		newSlot += step;

@@ -284,7 +284,7 @@ static int CG_GetDamageIndicatorDirValue( const void *parameter ) {
 
 	if( cg.damageBlends[index] > cg.time && !cg.view.thirdperson ) {
 		frac = ( cg.damageBlends[index] - cg.time ) / 300.0f;
-		clamp( frac, 0.0f, 1.0f );
+		Q_clamp( frac, 0.0f, 1.0f );
 	}
 
 	return frac * 1000;
@@ -364,9 +364,6 @@ static int CG_DownloadInProgress( const void *parameter ) {
 }
 
 static int CG_GetShowItemTimers( const void *parameter ) {
-	if( cgs.tv ) {
-		return (int)trap_Cvar_Value( (char *)parameter ) & 2;
-	}
 	return (int)trap_Cvar_Value( (char *)parameter ) & 1;
 }
 
@@ -411,7 +408,7 @@ static int CG_GetItemTimerTeam( const void *parameter ) {
 	if( !cent ) {
 		return 0;
 	}
-	return max( (int)cent->current.modelindex - 1, 0 );
+	return fmax( (int)cent->current.modelindex - 1, 0 );
 }
 
 static int CG_InputDeviceSupported( const void *parameter ) {
@@ -552,7 +549,7 @@ static int CG_GetTouchUpmove( const void *parameter ) {
 static int CG_GetTouchMovementDirection( const void *parameter ) {
 	vec3_t movement;
 
-	CG_GetTouchMovement( movement );
+	CG_GetMovement( movement );
 
 	if( !movement[0] && !movement[1] ) {
 		return STAT_NOTSET;
@@ -563,26 +560,28 @@ static int CG_GetTouchMovementDirection( const void *parameter ) {
 			return 0;
 		}
 		return ( movement[1] > 0.0f ) ? 45 : -45;
-	} else if( movement[0] < 0.0f ) {
+	}
+
+	if( movement[0] < 0.0f ) {
 		if( !movement[1] ) {
 			return 180;
 		}
 		return 180 - ( ( movement[1] > 0.0f ) ? 45 : -45 );
-	} else {
-		return ( movement[1] > 0.0f ) ? 90 : -90;
 	}
+
+	return ( movement[1] > 0.0f ) ? 90 : -90;
 }
 
 static int CG_GetScoreboardShown( const void *parameter ) {
 	return CG_IsScoreboardShown() ? 1 : 0;
 }
 
-static int CG_GetQuickMenuState( const void *parameter ) {
-	if( trap_SCR_IsQuickMenuShown() ) {
+static int CG_GetOverlayMenuState( const void *parameter ) {
+	if( trap_SCR_HaveOverlay() && cg_overlay.showCursor ) {
 		return 2;
 	}
 
-	if( trap_SCR_HaveQuickMenu() ) {
+	if( trap_SCR_HaveOverlay() ) {
 		return 1;
 	}
 
@@ -674,7 +673,7 @@ static const reference_numeric_t cg_numeric_references[] =
 	{ "PMOVE_TYPE", CG_GetPmoveType, NULL },
 	{ "DEMOPLAYING", CG_IsDemoPlaying, NULL },
 	{ "INSTANTRESPAWN", CG_GetLayoutStatFlag, (void *)STAT_LAYOUT_INSTANTRESPAWN },
-	{ "QUICKMENU", CG_GetQuickMenuState, NULL },
+	{ "QUICKMENU", CG_GetOverlayMenuState, NULL },
 
 	{ "POWERUP_QUAD_TIME", CG_GetPowerupTime, (void *)POWERUP_QUAD },
 	{ "POWERUP_WARSHELL_TIME", CG_GetPowerupTime, (void *)POWERUP_SHELL },
@@ -910,7 +909,7 @@ static void CG_DrawObituaries( int x, int y, int align, struct qfontface_s *font
 		return;
 	}
 
-	line_height = max( (unsigned)trap_SCR_FontHeight( font ), icon_size );
+	line_height = fmax( (unsigned)trap_SCR_FontHeight( font ), icon_size );
 	num_max = height / line_height;
 
 	if( width < (int)icon_size || !num_max ) {
@@ -964,60 +963,60 @@ static void CG_DrawObituaries( int x, int y, int align, struct qfontface_s *font
 
 		switch( obr->mod ) {
 			case MOD_GUNBLADE_W:
-				pic = CG_MediaShader( cgs.media.shaderWeaponIcon[WEAP_GUNBLADE - 1] );
+				pic = cgs.media.shaderWeaponIcon[WEAP_GUNBLADE - 1];
 				break;
 			case MOD_GUNBLADE_S:
-				pic = CG_MediaShader( cgs.media.shaderGunbladeBlastIcon );
+				pic = cgs.media.shaderGunbladeBlastIcon;
 				break;
 			case MOD_MACHINEGUN_W:
 			case MOD_MACHINEGUN_S:
-				pic = CG_MediaShader( cgs.media.shaderWeaponIcon[WEAP_MACHINEGUN - 1] );
+				pic = cgs.media.shaderWeaponIcon[WEAP_MACHINEGUN - 1];
 				break;
 			case MOD_RIOTGUN_W:
 			case MOD_RIOTGUN_S:
-				pic = CG_MediaShader( cgs.media.shaderWeaponIcon[WEAP_RIOTGUN - 1] );
+				pic = cgs.media.shaderWeaponIcon[WEAP_RIOTGUN - 1];
 				break;
 			case MOD_GRENADE_W:
 			case MOD_GRENADE_S:
 			case MOD_GRENADE_SPLASH_W:
 			case MOD_GRENADE_SPLASH_S:
-				pic = CG_MediaShader( cgs.media.shaderWeaponIcon[WEAP_GRENADELAUNCHER - 1] );
+				pic = cgs.media.shaderWeaponIcon[WEAP_GRENADELAUNCHER - 1];
 				break;
 			case MOD_ROCKET_W:
 			case MOD_ROCKET_S:
 			case MOD_ROCKET_SPLASH_W:
 			case MOD_ROCKET_SPLASH_S:
-				pic = CG_MediaShader( cgs.media.shaderWeaponIcon[WEAP_ROCKETLAUNCHER - 1] );
+				pic = cgs.media.shaderWeaponIcon[WEAP_ROCKETLAUNCHER - 1];
 				break;
 			case MOD_PLASMA_W:
 			case MOD_PLASMA_S:
 			case MOD_PLASMA_SPLASH_W:
 			case MOD_PLASMA_SPLASH_S:
-				pic = CG_MediaShader( cgs.media.shaderWeaponIcon[WEAP_PLASMAGUN - 1] );
+				pic = cgs.media.shaderWeaponIcon[WEAP_PLASMAGUN - 1];
 				break;
 			case MOD_ELECTROBOLT_W:
 			case MOD_ELECTROBOLT_S:
-				pic = CG_MediaShader( cgs.media.shaderWeaponIcon[WEAP_ELECTROBOLT - 1] );
+				pic = cgs.media.shaderWeaponIcon[WEAP_ELECTROBOLT - 1];
 				break;
 			case MOD_INSTAGUN_W:
 			case MOD_INSTAGUN_S:
-				pic = CG_MediaShader( cgs.media.shaderWeaponIcon[WEAP_INSTAGUN - 1] );
+				pic = cgs.media.shaderWeaponIcon[WEAP_INSTAGUN - 1];
 				break;
 			case MOD_LASERGUN_W:
 			case MOD_LASERGUN_S:
-				pic = CG_MediaShader( cgs.media.shaderWeaponIcon[WEAP_LASERGUN - 1] );
+				pic = cgs.media.shaderWeaponIcon[WEAP_LASERGUN - 1];
 				break;
 			default:
-				pic = CG_MediaShader( cgs.media.shaderWeaponIcon[WEAP_GUNBLADE - 1] ); // FIXME
+				pic = cgs.media.shaderWeaponIcon[WEAP_GUNBLADE - 1]; // FIXME
 				break;
 		}
 
 		w = 0;
 		if( obr->type != OBITUARY_ACCIDENT ) {
-			w += min( trap_SCR_strWidth( obr->attacker, font, 0 ), ( width - icon_size ) / 2 );
+			w += fmin( trap_SCR_strWidth( obr->attacker, font, 0 ), ( width - icon_size ) / 2 );
 		}
 		w += icon_size;
-		w += min( trap_SCR_strWidth( obr->victim, font, 0 ), ( width - icon_size ) / 2 );
+		w += fmin( trap_SCR_strWidth( obr->victim, font, 0 ), ( width - icon_size ) / 2 );
 
 		if( internal_align == 1 ) {
 			// left
@@ -1039,7 +1038,7 @@ static void CG_DrawObituaries( int x, int y, int align, struct qfontface_s *font
 			trap_SCR_DrawStringWidth( x + xoffset, y + yoffset + ( line_height - trap_SCR_FontHeight( font ) ) / 2,
 									  ALIGN_LEFT_TOP, COM_RemoveColorTokensExt( obr->attacker, true ), ( width - icon_size ) / 2,
 									  font, teamcolor );
-			xoffset += min( trap_SCR_strWidth( obr->attacker, font, 0 ), ( width - icon_size ) / 2 );
+			xoffset += fmin( trap_SCR_strWidth( obr->attacker, font, 0 ), ( width - icon_size ) / 2 );
 		}
 
 		if( ( obr->victim_team == TEAM_ALPHA ) || ( obr->victim_team == TEAM_BETA ) ) {
@@ -1140,7 +1139,7 @@ static struct shader_s *CG_GetWeaponIcon( int weapon ) {
 
 	if( weapon == WEAP_GUNBLADE && cg.predictedPlayerState.inventory[AMMO_GUNBLADE] ) {
 		if( currentWeapon != WEAP_GUNBLADE || ( weaponState != WEAPON_STATE_REFIRESTRONG && weaponState != WEAPON_STATE_REFIRE ) ) {
-			return CG_MediaShader( cgs.media.shaderGunbladeBlastIcon );
+			return cgs.media.shaderGunbladeBlastIcon;
 		}
 	}
 
@@ -1150,13 +1149,13 @@ static struct shader_s *CG_GetWeaponIcon( int weapon ) {
 			int chargeTimeStep = chargeTime / 3;
 			if( chargeTimeStep > 0 ) {
 				int charge = ( chargeTime - cg.predictedPlayerState.stats[STAT_WEAPON_TIME] ) / chargeTimeStep;
-				clamp( charge, 0, 2 );
-				return CG_MediaShader( cgs.media.shaderInstagunChargeIcon[charge] );
+				Q_clamp( charge, 0, 2 );
+				return cgs.media.shaderInstagunChargeIcon[charge];
 			}
 		}
 	}
 
-	return CG_MediaShader( cgs.media.shaderWeaponIcon[weapon - WEAP_GUNBLADE] );
+	return cgs.media.shaderWeaponIcon[weapon - WEAP_GUNBLADE];
 }
 
 static int cg_touch_dropWeapon;
@@ -1273,7 +1272,7 @@ static void CG_DrawWeaponIcons( int x, int y, int offx, int offy, int iw, int ih
 			if( cg.predictedPlayerState.inventory[WEAP_GUNBLADE + i] ) {
 				// swipe the weapon icon
 				if( cg_touch_dropWeapon == WEAP_GUNBLADE + i ) {
-					float dropOffset = ( bound( 0.75f, cg_touch_dropWeaponTime, 1.0f ) - 0.75f ) * 4.0f;
+					float dropOffset = ( Q_bound( 0.75f, cg_touch_dropWeaponTime, 1.0f ) - 0.75f ) * 4.0f;
 					curx += cg_touch_dropWeaponX * dropOffset;
 					cury += cg_touch_dropWeaponY * dropOffset;
 				}
@@ -1283,7 +1282,7 @@ static void CG_DrawWeaponIcons( int x, int y, int offx, int offy, int iw, int ih
 					if( customWeaponSelectPic ) {
 						trap_R_DrawStretchPic( curx, cury, curw, curh, 0, 0, 1, 1, colorTrans, trap_R_RegisterPic( customWeaponSelectPic ) );
 					} else {
-						trap_R_DrawStretchPic( curx, cury, curw, curh, 0, 0, 1, 1, colorTrans, CG_MediaShader( cgs.media.shaderSelect ) );
+						trap_R_DrawStretchPic( curx, cury, curw, curh, 0, 0, 1, 1, colorTrans, cgs.media.shaderSelect );
 					}
 				}
 				if( customWeaponPics[i] ) {
@@ -1295,7 +1294,7 @@ static void CG_DrawWeaponIcons( int x, int y, int offx, int offy, int iw, int ih
 			if( customNoGunWeaponPics[i] ) {
 				trap_R_DrawStretchPic( curx, cury, curw, curh, 0, 0, 1, 1, colorWhite, trap_R_RegisterPic( customNoGunWeaponPics[i] ) );
 			} else {
-				trap_R_DrawStretchPic( curx, cury, curw, curh, 0, 0, 1, 1, colorWhite, CG_MediaShader( cgs.media.shaderNoGunWeaponIcon[i] ) );
+				trap_R_DrawStretchPic( curx, cury, curw, curh, 0, 0, 1, 1, colorWhite, cgs.media.shaderNoGunWeaponIcon[i] );
 			}
 		}
 		j++;
@@ -1358,7 +1357,7 @@ static void CG_DrawWeaponAmmos( int x, int y, int offx, int offy, int fontsize, 
 			cury = y + (int)( offy * ( fj - fn / 2.0f ) );
 
 			if( cg_touch_dropWeapon == WEAP_GUNBLADE + i ) {
-				float dropOffset = ( bound( 0.75f, cg_touch_dropWeaponTime, 1.0f ) - 0.75f ) * 4.0f;
+				float dropOffset = ( Q_bound( 0.75f, cg_touch_dropWeaponTime, 1.0f ) - 0.75f ) * 4.0f;
 				curx += cg_touch_dropWeaponX * dropOffset;
 				cury += cg_touch_dropWeaponY * dropOffset;
 			}
@@ -1420,7 +1419,7 @@ static void CG_DrawWeaponCrossQuarter( int ammopass, int quarter, int x, int y, 
 		if( customWeaponSelectPic ) {
 			trap_R_DrawStretchPic( x, y, iw, ih, 0.0f, 0.0f, 1.0f, 1.0f, colorTrans, trap_R_RegisterPic( customWeaponSelectPic ) );
 		} else {
-			trap_R_DrawStretchPic( x, y, iw, ih, 0.0f, 0.0f, 1.0f, 1.0f, colorTrans, CG_MediaShader( cgs.media.shaderSelect ) );
+			trap_R_DrawStretchPic( x, y, iw, ih, 0.0f, 0.0f, 1.0f, 1.0f, colorTrans, cgs.media.shaderSelect );
 		}
 	}
 
@@ -1975,7 +1974,7 @@ static bool CG_LFuncColor( struct cg_layoutnode_s *commandnode, struct cg_layout
 	int i;
 	for( i = 0; i < 4; i++ ) {
 		layout_cursor_color[i] = CG_GetNumericArg( &argumentnode );
-		clamp( layout_cursor_color[i], 0, 1 );
+		Q_clamp( layout_cursor_color[i], 0, 1 );
 	}
 	return true;
 }
@@ -1994,7 +1993,7 @@ static bool CG_LFuncRotationSpeed( struct cg_layoutnode_s *commandnode, struct c
 	int i;
 	for( i = 0; i < 3; i++ ) {
 		layout_cursor_rotation[i] = CG_GetNumericArg( &argumentnode );
-		clamp( layout_cursor_rotation[i], 0, 999 );
+		Q_clamp( layout_cursor_rotation[i], 0, 999 );
 	}
 	return true;
 }
@@ -2479,12 +2478,11 @@ static bool CG_LFuncDrawCaptureAreas( struct cg_layoutnode_s *commandnode, struc
 }
 
 static bool CG_LFuncDrawMiniMap( struct cg_layoutnode_s *commandnode, struct cg_layoutnode_s *argumentnode, int numArguments ) {
-	bool draw_playernames, draw_itemnames;
+	float viewDist;
 
-	draw_playernames = (int)( CG_GetNumericArg( &argumentnode ) ) == 0 ? false : true;
-	draw_itemnames = (int)( CG_GetNumericArg( &argumentnode ) ) == 0 ? false : true;
+	viewDist = CG_GetNumericArg( &argumentnode );
 
-	CG_DrawMiniMap( layout_cursor_x, layout_cursor_y, layout_cursor_width, layout_cursor_height, draw_playernames, draw_itemnames, layout_cursor_align, layout_cursor_color );
+	CG_DrawMiniMap( layout_cursor_x, layout_cursor_y, layout_cursor_width, layout_cursor_height, viewDist, layout_cursor_align, layout_cursor_color );
 
 	return true;
 }
@@ -2533,6 +2531,9 @@ static bool CG_LFuncDrawTeamInfo( struct cg_layoutnode_s *commandnode, struct cg
 }
 
 static bool CG_LFuncDrawCrossHair( struct cg_layoutnode_s *commandnode, struct cg_layoutnode_s *argumentnode, int numArguments ) {
+	if( CG_asHUDDrawCrosshair() ) {
+		return true;
+	}
 	CG_DrawCrosshair( layout_cursor_x, layout_cursor_y, layout_cursor_align );
 	return true;
 }
@@ -2581,20 +2582,23 @@ static void CG_ViewUpFunc( int id, int64_t time ) {
 	CG_SetTouchpad( TOUCHPAD_VIEW, -1 );
 
 	if( cg_hud_touch_zoomSeq ) {
-		cg_touch_t &touch = cg_touches[id];
+		cg_touch_t *touch = CG_GetTouch( id );
+
+		if( !touch )
+			return;
 
 		int threshold = ( int )( cg_touch_zoomThres->value * cgs.pixelRatio );
 		if( !time || ( (int)( time - cg_hud_touch_zoomLastTouch ) > cg_touch_zoomTime->integer ) ||
-			( abs( touch.x - cg_hud_touch_zoomX ) > threshold ) ||
-			( abs( touch.y - cg_hud_touch_zoomY ) > threshold ) ) {
+			( abs( touch->x - cg_hud_touch_zoomX ) > threshold ) ||
+			( abs( touch->y - cg_hud_touch_zoomY ) > threshold ) ) {
 			cg_hud_touch_zoomSeq = 0;
 		}
 
 		if( cg_hud_touch_zoomSeq == 1 ) {
 			cg_hud_touch_zoomSeq = 2;
 			cg_hud_touch_zoomLastTouch = time;
-			cg_hud_touch_zoomX = touch.x;
-			cg_hud_touch_zoomY = touch.y;
+			cg_hud_touch_zoomX = touch->x;
+			cg_hud_touch_zoomY = touch->y;
 		} else if( cg_hud_touch_zoomSeq == 3 ) {
 			cg_hud_touch_zoomSeq = 0;
 			cg_hud_touch_buttons ^= BUTTON_ZOOM; // toggle zoom after a double tap
@@ -2610,20 +2614,24 @@ static bool CG_LFuncTouchView( struct cg_layoutnode_s *commandnode, struct cg_la
 	if( touchID >= 0 ) {
 		CG_SetTouchpad( TOUCHPAD_VIEW, touchID );
 
-		cg_touch_t &touch = cg_touches[touchID];
+		cg_touch_t *touch = CG_GetTouch( touchID );
+		if( !touch ) {
+			return true;
+		}
+
 		if( cg_hud_touch_zoomSeq ) {
 			int threshold = ( int )( cg_touch_zoomThres->value * cgs.pixelRatio );
-			if( ( ( int )( touch.time - cg_hud_touch_zoomLastTouch ) > cg_touch_zoomTime->integer ) ||
-				( abs( touch.x - cg_hud_touch_zoomX ) > threshold ) ||
-				( abs( touch.y - cg_hud_touch_zoomY ) > threshold ) ) {
+			if( ( ( int )( touch->time - cg_hud_touch_zoomLastTouch ) > cg_touch_zoomTime->integer ) ||
+				( abs( touch->x - cg_hud_touch_zoomX ) > threshold ) ||
+				( abs( touch->y - cg_hud_touch_zoomY ) > threshold ) ) {
 				cg_hud_touch_zoomSeq = 0;
 			}
 		}
 		if( !cg_hud_touch_zoomSeq || ( cg_hud_touch_zoomSeq == 2 ) ) {
 			cg_hud_touch_zoomSeq++;
-			cg_hud_touch_zoomLastTouch = touch.time;
-			cg_hud_touch_zoomX = touch.x;
-			cg_hud_touch_zoomY = touch.y;
+			cg_hud_touch_zoomLastTouch = touch->time;
+			cg_hud_touch_zoomX = touch->x;
+			cg_hud_touch_zoomY = touch->y;
 		}
 	}
 
@@ -2715,27 +2723,6 @@ static bool CG_LFuncTouchScores( struct cg_layoutnode_s *commandnode, struct cg_
 	}
 	return true;
 }
-
-static void CG_QuickMenuUpFunc( int id, int64_t time ) {
-	if( GS_MatchState() < MATCH_STATE_POSTMATCH ) {
-		CG_ShowQuickMenu( 0 );
-	}
-}
-
-static bool CG_LFuncTouchQuickMenu( struct cg_layoutnode_s *commandnode, struct cg_layoutnode_s *argumentnode, int numArguments ) {
-	int side = ( int )CG_GetNumericArg( &argumentnode );
-
-	if( GS_MatchState() < MATCH_STATE_POSTMATCH ) {
-		if( CG_TouchArea( TOUCHAREA_HUD_QUICKMENU,
-						  CG_HorizontalAlignForWidth( layout_cursor_x, layout_cursor_align, layout_cursor_width ),
-						  CG_VerticalAlignForHeight( layout_cursor_y, layout_cursor_align, layout_cursor_height ),
-						  layout_cursor_width, layout_cursor_height, CG_QuickMenuUpFunc ) >= 0 ) {
-			CG_ShowQuickMenu( ( side < 0 ) ? -1 : 1 );
-		}
-	}
-	return true;
-}
-
 
 static bool CG_LFuncIf( struct cg_layoutnode_s *commandnode, struct cg_layoutnode_s *argumentnode, int numArguments ) {
 	return (int)CG_GetNumericArg( &argumentnode ) != 0;
@@ -3428,15 +3415,6 @@ static const cg_layoutcommand_t cg_LayoutCommands[] =
 		CG_LFuncTouchScores,
 		0,
 		"Places scoreboard button",
-		false
-	},
-
-	{
-		"touchQuickMenu",
-		NULL,
-		CG_LFuncTouchQuickMenu,
-		1,
-		"Places quick menu button, 1 to show the menu on the right, -1 to show it on the left",
 		false
 	},
 
@@ -4515,7 +4493,7 @@ void CG_LoadStatusBar( void ) {
 	assert( hud );
 
 	// buffer for filenames
-	filename_size = strlen( "huds/" ) + max( strlen( default_hud ), strlen( hud->string ) ) + 4 + 1;
+	filename_size = strlen( "huds/" ) + fmax( strlen( default_hud ), strlen( hud->string ) ) + 4 + 1;
 	filename = ( char * )alloca( filename_size );
 
 	// always load default first. Custom second if needed

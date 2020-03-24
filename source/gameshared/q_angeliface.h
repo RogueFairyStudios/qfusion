@@ -35,6 +35,14 @@ typedef struct asvec3_s {
 	vec3_t v;
 } asvec3_t;
 
+typedef struct asvec4_s {
+	vec4_t v;
+} asvec4_t;
+
+typedef struct asmat3_s {
+	mat3_t m;
+} asmat3_t;
+
 class CScriptArrayInterface
 {
 protected:
@@ -120,6 +128,7 @@ typedef struct angelwrap_api_s {
 	// engine
 	asIScriptEngine *( *asCreateEngine )( bool *asMaxPortability );
 	void ( *asReleaseEngine )( asIScriptEngine *engine );
+	void ( *asWriteEngineDocsToFile )( asIScriptEngine *engine, const char *path, bool markdown, bool singleFile, unsigned andMask, unsigned notMask );
 
 	// context
 	asIScriptContext *( *asAcquireContext )( asIScriptEngine * engine );

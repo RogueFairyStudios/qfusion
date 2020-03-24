@@ -43,7 +43,7 @@ typedef void ( *cg_fdrawchar_t )( int x, int y, int w, int h, float s1, float t1
 
 // cg_public.h -- client game dll information visible to engine
 
-#define CGAME_API_VERSION   101
+#define CGAME_API_VERSION   104
 
 //
 // structs and variables shared with the main engine
@@ -140,9 +140,6 @@ typedef struct {
 	int64_t ( *Milliseconds )( void );
 	bool ( *DownloadRequest )( const char *filename, bool requestpak );
 
-	unsigned int ( * Hash_BlockChecksum )( const uint8_t * data, size_t len );
-	unsigned int ( * Hash_SuperFastHash )( const uint8_t * data, size_t len, unsigned int seed );
-
 	void ( *NET_GetUserCmd )( int frame, usercmd_t *cmd );
 	int ( *NET_GetCurrentUserCmdNum )( void );
 	void ( *NET_GetCurrentState )( int64_t *incomingAcknowledged, int64_t *outgoingSequence, int64_t *outgoingSent );
@@ -186,7 +183,7 @@ typedef struct {
 	void ( *R_GetScissor )( int *x, int *y, int *w, int *h );
 	void ( *R_ResetScissor )( void );
 	void ( *R_GetShaderDimensions )( const struct shader_s *shader, int *width, int *height );
-	void ( *R_TransformVectorToScreen )( const struct refdef_s *rd, const vec3_t in, vec2_t out );
+	void ( *R_TransformVectorToScreen )( const struct refdef_s *rd, const vec3_t in, vec3_t out );
 	int ( *R_SkeletalGetNumBones )( const struct model_s *mod, int *numFrames );
 	int ( *R_SkeletalGetBoneInfo )( const struct model_s *mod, int bone, char *name, size_t name_size, int *flags );
 	void ( *R_SkeletalGetBonePose )( const struct model_s *mod, int bone, int frame, struct bonepose_s *bonepose );
@@ -202,6 +199,7 @@ typedef struct {
 	struct cmodel_s *( *CM_OctagonModelForBBox )( vec3_t mins, vec3_t maxs );
 	void ( *CM_TransformedBoxTrace )( trace_t *tr, vec3_t start, vec3_t end, vec3_t mins, vec3_t maxs, struct cmodel_s *cmodel, int brushmask, vec3_t origin, vec3_t angles );
 	int ( *CM_TransformedPointContents )( vec3_t p, struct cmodel_s *cmodel, vec3_t origin, vec3_t angles );
+	void ( *CM_RoundUpToHullSize )( vec3_t mins, vec3_t maxs, struct cmodel_s *cmodel );
 	void ( *CM_InlineModelBounds )( struct cmodel_s *cmodel, vec3_t mins, vec3_t maxs );
 	bool ( *CM_InPVS )( const vec3_t p1, const vec3_t p2 );
 
@@ -239,10 +237,16 @@ typedef struct {
 	size_t ( *SCR_strWidth )( const char *str, struct qfontface_s *font, size_t maxlen, int flags );
 	size_t ( *SCR_StrlenForWidth )( const char *str, struct qfontface_s *font, size_t maxwidth, int flags );
 	cg_fdrawchar_t ( *SCR_SetDrawCharIntercept )( cg_fdrawchar_t intercept );
-	void ( *SCR_EnableQuickMenu )( bool enabled );
-	bool ( *SCR_HaveQuickMenu )( void );
-	bool ( *SCR_IsQuickMenuShown )( void );
 	void ( *SCR_DrawChat )( int x, int y, int width, struct qfontface_s *font );
+	void ( *SCR_ShowOverlay )( bool show, bool showCursor );
+	bool ( *SCR_HaveOverlay )( void );
+	void ( *SCR_OverlayKeyEvent )( int key, bool down );
+	void ( *SCR_OverlayMouseMove )( int x, int y, bool abs );
+	/**
+	* SCR_OverlayHover
+	* Returns true if mouse hovers above something that's isn't the body element.
+	*/
+	bool ( *SCR_OverlayHover )( void );
 
 	// managed memory allocation
 	void *( *Mem_Alloc )( size_t size, const char *filename, int fileline );
@@ -262,6 +266,9 @@ typedef struct {
 	unsigned int ( *IN_IME_GetCandidates )( char * const *cands, size_t candSize, unsigned int maxCands,
 											int *selected, int *firstKey );
 	unsigned int ( *IN_SupportedDevices )( void );
+
+	// angelscript api
+	struct angelwrap_api_s *( *asGetAngelExport )( void );
 } cgame_import_t;
 
 //
@@ -288,8 +295,6 @@ typedef struct {
 
 	void ( *GetEntitySpatilization )( int entNum, vec3_t origin, vec3_t velocity );
 
-	float ( *GetSensitivityScale )( float sens, float zoomSens );
-
 	void ( *Trace )( trace_t *tr, vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int passent, int contentmask );
 
 	void ( *RenderView )( int frameTime, int realFrameTime, int64_t realTime, int64_t serverTime, float stereo_separation, unsigned extrapolationTime );
@@ -299,9 +304,9 @@ typedef struct {
 	/**
 	 * Updates input-related parts of cgame every frame.
 	 *
-	 * @param frametime real frame time
+	 * @param inputTime system timer value when input events for this frame occured.
 	 */
-	void ( *InputFrame )( int frameTime );
+	void ( *InputFrame )( int64_t inputTime );
 
 	/**
 	* Transmits accumulated mouse movement event for the current frame.
@@ -358,6 +363,15 @@ typedef struct {
 	 * @return whether the finger is in cgame touch context
 	 */
 	bool ( *IsTouchDown )( int id );
+
+	/**
+	* Passes the key press/up event to clientside game module.
+	* Returns true if the action bound to the key should not be sent to the interpreter.
+	*
+	* @param key  key id
+	* @param down true, if it's a button down event
+	*/
+	bool ( *KeyEvent )( int key, bool down );
 } cgame_export_t;
 
 #endif

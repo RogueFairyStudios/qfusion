@@ -93,7 +93,7 @@ static cg_democam_t *CG_Democam_FindCurrent( int64_t time ) {
 	cam = cg_cams_headnode;
 	curcam = NULL;
 	while( cam != NULL ) {
-		if( curcam == NULL || ( cam->timeStamp <= time && cam->timeStamp > higher_time ) ) {
+		if( cam->timeStamp <= time && cam->timeStamp > higher_time ) {
 			higher_time = cam->timeStamp;
 			curcam = cam;
 		}
@@ -107,13 +107,13 @@ static cg_democam_t *CG_Democam_FindCurrent( int64_t time ) {
 * CG_Democam_FindNext
 */
 static cg_democam_t *CG_Democam_FindNext( int64_t time ) {
-	int64_t lower_time = 0;
+	int64_t lower_time = INT64_MAX;
 	cg_democam_t *cam, *ncam;
 
 	cam = cg_cams_headnode;
 	ncam = NULL;
 	while( cam != NULL ) {
-		if( ncam == NULL || ( cam->timeStamp > time && cam->timeStamp < lower_time ) ) {
+		if( cam->timeStamp > time && cam->timeStamp < lower_time ) {
 			lower_time = cam->timeStamp;
 			ncam = cam;
 		}
@@ -223,7 +223,7 @@ static cg_subtitle_t *CG_Democam_FindCurrentSubtitle( void ) {
 	sub = cg_subs_headnode;
 	currentsub = NULL;
 	while( sub != NULL ) {
-		if( ( currentsub == NULL || sub->timeStamp > higher_time ) && sub->timeStamp <= demo_time &&
+		if( sub->timeStamp > higher_time && sub->timeStamp <= demo_time &&
 			( sub->timeStamp + sub->maxDuration > demo_time ) ) {
 			higher_time = sub->timeStamp;
 			currentsub = sub;
@@ -640,7 +640,7 @@ static void CG_DrawEntityNumbers( void ) {
 	float dist;
 	trace_t trace;
 	vec3_t eorigin;
-	int shadowOffset = max( 1, cgs.vidHeight / 600 );
+	int shadowOffset = fmax( 1, cgs.vidHeight / 600 );
 
 	for( i = 0; i < cg.frame.numEntities; i++ ) {
 		entnum = cg.frame.parsedEntities[i & ( MAX_PARSE_ENTITIES - 1 )].number;
@@ -926,7 +926,7 @@ float CG_DemoCam_GetOrientation( vec3_t origin, vec3_t angles, vec3_t velocity )
 	VectorCopy( cam_velocity, velocity );
 
 	if( !currentcam || !currentcam->fov ) {
-		return bound( MIN_FOV, cg_fov->value, MAX_FOV );
+		return Q_bound( MIN_FOV, cg_fov->value, MAX_FOV );
 	}
 
 	return cam_fov;
@@ -980,7 +980,7 @@ int CG_DemoCam_FreeFly( void ) {
 
 		cam_POVent = 0;
 		cam_3dPerson = false;
-		return VIEWDEF_CAMERA;
+		return VIEWDEF_DEMOCAM;
 	}
 
 	return VIEWDEF_PLAYERVIEW;
@@ -991,7 +991,7 @@ static void CG_Democam_SetCameraPositionFromView( void ) {
 		VectorCopy( cg.view.origin, cam_origin );
 		VectorCopy( cg.view.angles, cam_angles );
 		VectorCopy( cg.view.velocity, cam_velocity );
-		cam_fov = cg.view.refdef.fov_x;
+		cam_fov = cg.view.fov_y;
 		cam_orbital_radius = 0;
 	}
 
@@ -1031,19 +1031,19 @@ static int CG_Democam_CalcView( void ) {
 				VectorCopy( cg.view.origin, cam_origin );
 				VectorCopy( cg.view.angles, cam_angles );
 				VectorCopy( cg.view.velocity, cam_velocity );
-				cam_fov = cg.view.refdef.fov_x;
+				cam_fov = cg.view.fov_y;
 				break;
 
 			case DEMOCAM_THIRDPERSON:
 				VectorCopy( cg.view.origin, cam_origin );
 				VectorCopy( cg.view.angles, cam_angles );
 				VectorCopy( cg.view.velocity, cam_velocity );
-				cam_fov = cg.view.refdef.fov_x;
+				cam_fov = cg.view.fov_y;
 				cam_3dPerson = true;
 				break;
 
 			case DEMOCAM_POSITIONAL:
-				viewType = VIEWDEF_CAMERA;
+				viewType = VIEWDEF_DEMOCAM;
 				cam_POVent = 0;
 				VectorCopy( currentcam->origin, cam_origin );
 				if( !CG_DemoCam_LookAt( currentcam->trackEnt, cam_origin, cam_angles ) ) {
@@ -1053,7 +1053,7 @@ static int CG_Democam_CalcView( void ) {
 				break;
 
 			case DEMOCAM_PATH_LINEAR:
-				viewType = VIEWDEF_CAMERA;
+				viewType = VIEWDEF_DEMOCAM;
 				cam_POVent = 0;
 				VectorCopy( cam_origin, v );
 
@@ -1074,13 +1074,12 @@ static int CG_Democam_CalcView( void ) {
 
 				// set velocity
 				VectorSubtract( cam_origin, v, cam_velocity );
-				VectorScale( cam_velocity, 1.0f / (float)cg.frameTime, cam_velocity );
 				break;
 
 			case DEMOCAM_PATH_SPLINE:
-				viewType = VIEWDEF_CAMERA;
+				viewType = VIEWDEF_DEMOCAM;
 				cam_POVent = 0;
-				clamp( lerpfrac, 0, 1 );
+				Q_clamp( lerpfrac, 0, 1 );
 				VectorCopy( cam_origin, v );
 
 				if( !nextcam || nextcam->type == DEMOCAM_FIRSTPERSON || nextcam->type == DEMOCAM_THIRDPERSON ) {
@@ -1146,11 +1145,10 @@ static int CG_Democam_CalcView( void ) {
 
 				// set velocity
 				VectorSubtract( cam_origin, v, cam_velocity );
-				VectorScale( cam_velocity, 1.0f / (float)cg.frameTime, cam_velocity );
 				break;
 
 			case DEMOCAM_ORBITAL:
-				viewType = VIEWDEF_CAMERA;
+				viewType = VIEWDEF_DEMOCAM;
 				cam_POVent = 0;
 				cam_fov = currentcam->fov;
 				VectorCopy( cam_origin, v );
@@ -1198,7 +1196,6 @@ static int CG_Democam_CalcView( void ) {
 
 				// set velocity
 				VectorSubtract( cam_origin, v, cam_velocity );
-				VectorScale( cam_velocity, 1.0f / ( cg.frameTime * 1000.0f ), cam_velocity );
 				break;
 
 			default:

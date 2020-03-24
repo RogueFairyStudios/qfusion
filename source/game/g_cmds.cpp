@@ -448,7 +448,7 @@ static void Cmd_PlayersExt_f( edict_t *ent, bool onlyspecs ) {
 	if( trap_Cmd_Argc() > 1 ) {
 		start = atoi( trap_Cmd_Argv( 1 ) );
 	}
-	clamp( start, 0, gs.maxclients - 1 );
+	Q_clamp( start, 0, gs.maxclients - 1 );
 
 	// print information
 	msg[0] = 0;
@@ -1160,15 +1160,6 @@ static void Cmd_Whois_f( edict_t *ent ) {
 }
 
 /*
-* Cmd_TVConnect_f
-*
-* Sends cmd to connect to a non-full TV server with round robin balancing
-*/
-static void Cmd_TVConnect_f( edict_t *ent ) {
-	G_MoveClientToTV( ent );
-}
-
-/*
 * Cmd_Upstate_f
 *
 * Update client on the state of things
@@ -1176,7 +1167,7 @@ static void Cmd_TVConnect_f( edict_t *ent ) {
 static void Cmd_Upstate_f( edict_t *ent ) {
 	G_UpdatePlayerMatchMsg( ent, true );
 	G_SetPlayerHelpMessage( ent, ent->r.client->level.helpmessage, true );
-	trap_GameCmd( ent, va( "qm %s", ent->r.client->level.quickMenuItems ) );
+	trap_GameCmd( ent, va( "qm %s", ent->r.client->level.overlayMenuItems ) );
 }
 
 //===========================================================
@@ -1319,9 +1310,6 @@ void G_InitGameCommands( void ) {
 
 	// ch : added awards
 	G_AddCommand( "awards", Cmd_Awards_f );
-
-	// TV
-	G_AddCommand( "tvconnect", Cmd_TVConnect_f );
 
 	// misc
 	G_AddCommand( "upstate", Cmd_Upstate_f );

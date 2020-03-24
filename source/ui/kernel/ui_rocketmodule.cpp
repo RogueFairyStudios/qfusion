@@ -14,36 +14,35 @@
 
 #include "parsers/ui_parsersound.h"
 
-#include <Rocket/Core/FontEffectInstancer.h>
-#include <Rocket/Controls.h>
+#include <RmlUi/Core/FontEffectInstancer.h>
+#include <RmlUi/Controls.h>
+#include <RmlUi/Debugger/Debugger.h>
 
 namespace WSWUI
 {
 
 //==================================================
 
-class MyEventInstancer : public Rocket::Core::EventInstancer
+class MyEventInstancer : public Rml::Core::EventInstancer
 {
-	typedef Rocket::Core::Event Event;
-	typedef Rocket::Core::Element Element;
-	typedef Rocket::Core::Dictionary Dictionary;
+	typedef Rml::Core::Event Event;
+	typedef Rml::Core::Element Element;
+	typedef Rml::Core::Dictionary Dictionary;
 
 public:
-	MyEventInstancer() : Rocket::Core::EventInstancer() {}
+	MyEventInstancer() : Rml::Core::EventInstancer() {}
 	~MyEventInstancer() {}
 
 	// rocket overrides
-	virtual Event *InstanceEvent( Element *target, const String &name, const Dictionary &parameters, bool interruptible ) {
-		// Com_Printf("MyEventInstancer: instancing %s %s\n", name.CString(), target->GetTagName().CString() );
-		return __new__( Event )( target, name, parameters, interruptible );
+	virtual Rml::Core::EventPtr InstanceEvent( Element *target, Rml::Core::EventId id, const std::string & type, const Dictionary &parameters, bool interruptible ) override {
+		return Rml::Core::EventPtr(__new__( Rml::Core::Event )( target, id, type, parameters, interruptible ));
 	}
 
-	virtual void ReleaseEvent( Event *event ) {
-		// Com_Printf("MyEventInstancer: releasing %s %s\n", event->GetType().CString(), event->GetTargetElement()->GetTagName().CString() );
+	virtual void ReleaseEvent( Event *event ) override {
 		__delete__( event );
 	}
 
-	virtual void Release() {
+	virtual void Release() override {
 		__delete__( this );
 	}
 };
@@ -51,74 +50,56 @@ public:
 //==================================================
 
 RocketModule::RocketModule( int vidWidth, int vidHeight, float pixelRatio )
-	: rocketInitialized( false ), hideCursorBits( 0 ),
+	: rocketInitialized( false ),
 
 	// pointers
 	systemInterface( nullptr ), fsInterface( nullptr ), renderInterface( nullptr ),
 	contextMain( nullptr ), contextQuick( nullptr ), 
 	scriptEventListenerInstancer( nullptr ) {
-	Rocket::Core::String contextName = trap::Cvar_String( "gamename" );
+	Rml::Core::String contextName = trap::Cvar_String( "gamename" );
 
 	renderInterface = __new__( UI_RenderInterface )( vidWidth, vidHeight, pixelRatio );
-	Rocket::Core::SetRenderInterface( renderInterface );
+	Rml::Core::SetRenderInterface( renderInterface );
 	systemInterface = __new__( UI_SystemInterface )();
-	Rocket::Core::SetSystemInterface( systemInterface );
+	Rml::Core::SetSystemInterface( systemInterface );
 	fsInterface = __new__( UI_FileInterface )();
-	Rocket::Core::SetFileInterface( fsInterface );
-	fontProviderInterface = __new__( UI_FontProviderInterface )( renderInterface );
-	Rocket::Core::SetFontProviderInterface( fontProviderInterface );
+	Rml::Core::SetFileInterface( fsInterface );
 
-	// TODO: figure out why renderinterface has +1 refcount
-	renderInterface->AddReference();
-	fontProviderInterface->AddReference();
+	fontEngineInterface = __new__( UI_FontEngineInterface )( renderInterface );
+	Rml::Core::SetFontEngineInterface( fontEngineInterface );
 
-	rocketInitialized = Rocket::Core::Initialise();
+	rocketInitialized = Rml::Core::Initialise();
 	if( !rocketInitialized ) {
-		throw std::runtime_error( "UI: Rocket::Core::Initialise failed" );
+		throw std::runtime_error( "UI: Rml::Core::Initialise failed" );
 	}
+
+	Rml::Core::RegisterPlugin( this );
 
 	// initialize the controls plugin
-	Rocket::Controls::Initialise();
+	Rml::Controls::Initialise();
 
 	// Create our contexts
-	contextMain = Rocket::Core::CreateContext( contextName, Vector2i( vidWidth, vidHeight ) );
+	contextMain = Rml::Core::CreateContext( contextName, Vector2i( vidWidth, vidHeight ) );
+	contextMain->SetDensityIndependentPixelRatio( pixelRatio );
 
-	contextQuick = Rocket::Core::CreateContext( contextName + "_quick", Vector2i( vidWidth, vidHeight ) );
-	if( contextQuick ) {
-		contextQuick->ShowMouseCursor( false );
-	}
+	contextQuick = Rml::Core::CreateContext( contextName + "_quick", Vector2i( vidWidth, vidHeight ) );
+	contextQuick->SetDensityIndependentPixelRatio( pixelRatio );
 
-	contextsTouch[UI_CONTEXT_MAIN].id = -1;
-	contextsTouch[UI_CONTEXT_QUICK].id = -1;
-}
+	memset( contextsTouch, -1, sizeof( *contextsTouch ) * UI_NUM_CONTEXTS );
 
-// here for hax0rz, TODO: move to "common" area
-template<typename T>
-void unref_object( T *obj ) {
-	obj->RemoveReference();
+	Rml::Debugger::Initialise( contextMain );
 }
 
 RocketModule::~RocketModule() {
-	if( fontProviderInterface ) {
-		fontProviderInterface->RemoveReference();
-	}
-
-	if( contextMain ) {
-		contextMain->RemoveReference();
-	}
 	contextMain = 0;
-
-	if( contextQuick ) {
-		contextQuick->RemoveReference();
-	}
 	contextQuick = 0;
 
 	if( rocketInitialized ) {
-		Rocket::Core::Shutdown();
+		rocketInitialized = false;
+		Rml::Core::Shutdown();
 	}
-	rocketInitialized = false;
 
-	__SAFE_DELETE_NULLIFY( fontProviderInterface );
+	__SAFE_DELETE_NULLIFY( fontEngineInterface );
 	__SAFE_DELETE_NULLIFY( fsInterface );
 	__SAFE_DELETE_NULLIFY( systemInterface );
 	__SAFE_DELETE_NULLIFY( renderInterface );
@@ -131,6 +112,15 @@ void RocketModule::mouseMove( int contextId, int mousex, int mousey ) {
 	context->ProcessMouseMove( mousex, mousey, KeyConverter::getModifiers() );
 }
 
+bool RocketModule::mouseHover( int contextId ) {
+	auto *context = contextForId( contextId );
+	Element *element = context->GetHoverElement();
+	if( !element || element->GetTagName() == "body" ) {
+		return false;
+	}
+	return true;
+}
+
 void RocketModule::textInput( int contextId, wchar_t c ) {
 	auto *context = contextForId( contextId );
 	if( c >= ' ' ) {
@@ -139,19 +129,10 @@ void RocketModule::textInput( int contextId, wchar_t c ) {
 }
 
 void RocketModule::keyEvent( int contextId, int key, bool pressed ) {
-	// DEBUG
-#if 0
-	if( key >= 32 && key <= 126 ) {
-		Com_Printf( "**KEYEVENT CHAR %c\n", key & 0xff );
-	} else {
-		Com_Printf( "**KEYEVENT KEY %d\n", key );
-	}
-#endif
-
 	if( key == K_MOUSE1DBLCLK ) {
 		return; // Rocket handles double click internally
-
 	}
+
 	auto *context = contextForId( contextId );
 	Element *element = context->GetFocusElement();
 
@@ -164,8 +145,8 @@ void RocketModule::keyEvent( int contextId, int key, bool pressed ) {
 
 	if( element && ( element->GetTagName() == "keyselect" ) ) {
 		if( pressed ) {
-			Rocket::Core::Dictionary parameters;
-			parameters.Set( "key", key );
+			Rml::Core::Dictionary parameters;
+			parameters["key"] = key;
 			element->DispatchEvent( "keyselect", parameters );
 		}
 	} else if( key >= K_MOUSE1 && key <= K_MOUSE8 ) {   // warsow sends mousebuttons as keys
@@ -178,6 +159,10 @@ void RocketModule::keyEvent( int contextId, int key, bool pressed ) {
 		context->ProcessMouseWheel( 1, mod );
 	} else if( key == K_MWHEELUP ) {
 		context->ProcessMouseWheel( -1, mod );
+	} else if( key == K_F11 ) {
+		if( pressed ) {
+			Rml::Debugger::SetVisible( !Rml::Debugger::IsVisible() );
+		}
 	} else {
 		if( ( key == K_A_BUTTON ) || ( key == K_DPAD_CENTER ) ) {
 			if( pressed ) {
@@ -189,7 +174,7 @@ void RocketModule::keyEvent( int contextId, int key, bool pressed ) {
 			int rkey = KeyConverter::toRocketKey( key );
 
 			if( key == K_B_BUTTON ) {
-				rkey = Rocket::Core::Input::KI_ESCAPE;
+				rkey = Rml::Core::Input::KI_ESCAPE;
 				if( element ) {
 					element->Blur();
 				}
@@ -197,9 +182,9 @@ void RocketModule::keyEvent( int contextId, int key, bool pressed ) {
 
 			if( rkey != 0 ) {
 				if( pressed ) {
-					context->ProcessKeyDown( Rocket::Core::Input::KeyIdentifier( rkey ), mod );
+					context->ProcessKeyDown( Rml::Core::Input::KeyIdentifier( rkey ), mod );
 				} else {
-					context->ProcessKeyUp( Rocket::Core::Input::KeyIdentifier( rkey ), mod );
+					context->ProcessKeyUp( Rml::Core::Input::KeyIdentifier( rkey ), mod );
 				}
 			}
 		}
@@ -211,8 +196,8 @@ bool RocketModule::touchEvent( int contextId, int id, touchevent_t type, int x, 
 	auto *context = contextForId( contextId );
 
 	if( ( type == TOUCH_DOWN ) && ( contextTouch.id < 0 ) ) {
-		if( contextId == UI_CONTEXT_QUICK ) {
-			Rocket::Core::Vector2f position( ( float )x, ( float )y );
+		if( contextId == UI_CONTEXT_OVERLAY ) {
+			Rml::Core::Vector2f position( ( float )x, ( float )y );
 			Element *element = context->GetElementAtPoint( position );
 			if( !element || element->GetTagName() == "body" ) {
 				return false;
@@ -238,7 +223,7 @@ bool RocketModule::touchEvent( int contextId, int id, touchevent_t type, int x, 
 		int delta = contextTouch.y - y;
 		if( delta ) {
 			if( !contextTouch.scroll ) {
-				int threshold = 32 * ( renderInterface->GetPixelsPerInch() / renderInterface->GetBasePixelsPerInch() );
+				int threshold = 32 * renderInterface->GetPixelRatio();
 				if( abs( delta ) > threshold ) {
 					contextTouch.scroll = true;
 					contextTouch.y += ( ( delta < 0 ) ? threshold : -threshold );
@@ -255,8 +240,8 @@ bool RocketModule::touchEvent( int contextId, int id, touchevent_t type, int x, 
 							break;
 						}
 
-						int overflow = element->GetProperty< int >( "overflow-y" );
-						if( ( overflow != Rocket::Core::OVERFLOW_AUTO ) && ( overflow != Rocket::Core::OVERFLOW_SCROLL ) ) {
+						auto overflow = (Rml::Core::Style::Overflow)element->GetProperty< int >( "overflow-y" );
+						if( ( overflow != Rml::Core::Style::Overflow::Auto ) && ( overflow != Rml::Core::Style::Overflow::Scroll ) ) {
 							continue;
 						}
 
@@ -300,110 +285,90 @@ void RocketModule::cancelTouches( int contextId ) {
 
 //==================================================
 
-Rocket::Core::ElementDocument *RocketModule::loadDocument( int contextId, const char *filename, bool show, void *user_data ) {
+Rml::Core::ElementDocument *RocketModule::loadDocument( int contextId, const char *filename, void *script_object ) {
 	auto *context = contextForId( contextId );
 	ASUI::UI_ScriptDocument *document = dynamic_cast<ASUI::UI_ScriptDocument *>( context->LoadDocument( filename ) );
 	if( !document ) {
 		return NULL;
 	}
 
-	if( show ) {
-		// load documents with autofocus disabled
-		document->Show( Rocket::Core::ElementDocument::NONE );
-		document->Focus();
-
-		// reference counting may bog on us if we cache documents!
-		document->RemoveReference();
-
-		// optional element specific eventlisteners here
-
-		// only for UI documents! FIXME: we are already doing this in NavigationStack
-		Rocket::Core::EventListener *listener = UI_GetMainListener();
-		document->AddEventListener( "keydown", listener );
-		document->AddEventListener( "change", listener );
-	}
+	document->SetScriptObject( script_object );
 
 	return document;
 }
 
-void RocketModule::closeDocument( Rocket::Core::ElementDocument *doc ) {
+void RocketModule::closeDocument( Rml::Core::ElementDocument *doc ) {
 	doc->Close();
+}
+
+int RocketModule::GetEventClasses() {
+	return Rml::Core::Plugin::EVT_DOCUMENT;
+}
+
+void RocketModule::OnDocumentLoad( Rml::Core::ElementDocument *document ) {
+	ASUI::UI_ScriptDocument *ui_document = dynamic_cast<ASUI::UI_ScriptDocument *>( document );
+	if( ui_document != nullptr ) {
+		ui_document->BuildScripts();
+		ui_document->UpdateDocument();
+	}
+}
+
+void RocketModule::OnDocumentUnload( Rml::Core::ElementDocument *document ) {
+	ASUI::UI_ScriptDocument *ui_document = dynamic_cast<ASUI::UI_ScriptDocument *>( document );
+	if( ui_document != nullptr ) {
+		ui_document->DestroyScripts();
+	}
 }
 
 //==================================================
 
-void RocketModule::registerElementDefaults( Rocket::Core::Element *element ) {
+void RocketModule::registerElementDefaults( Rml::Core::Element *element ) {
 	// add these as they pile up in BaseEventListener
 	element->AddEventListener( "mouseover", GetBaseEventListener() );
 	element->AddEventListener( "click", GetBaseEventListener() );
 }
 
-void RocketModule::registerElement( const char *tag, Rocket::Core::ElementInstancer *instancer ) {
-	Rocket::Core::Factory::RegisterElementInstancer( tag, instancer );
-	instancer->RemoveReference();
+void RocketModule::registerElement( const char *tag, Rml::Core::ElementInstancer *instancer ) {
+	Rml::Core::Factory::RegisterElementInstancer( tag, instancer );
 	elementInstancers.push_back( instancer );
 }
 
-void RocketModule::registerFontEffect( const char *name, Rocket::Core::FontEffectInstancer *instancer ) {
-	Rocket::Core::Factory::RegisterFontEffectInstancer( name, instancer );
-	instancer->RemoveReference();
+void RocketModule::registerFontEffect( const char *name, Rml::Core::FontEffectInstancer *instancer ) {
+	Rml::Core::Factory::RegisterFontEffectInstancer( name, instancer );
 }
 
-void RocketModule::registerDecorator( const char *name, Rocket::Core::DecoratorInstancer *instancer ) {
-	Rocket::Core::Factory::RegisterDecoratorInstancer( name, instancer );
-	instancer->RemoveReference();
+void RocketModule::registerDecorator( const char *name, Rml::Core::DecoratorInstancer *instancer ) {
+	Rml::Core::Factory::RegisterDecoratorInstancer( name, instancer );
 }
 
-void RocketModule::registerEventInstancer( Rocket::Core::EventInstancer *instancer ) {
-	Rocket::Core::Factory::RegisterEventInstancer( instancer );
-	instancer->RemoveReference();
+void RocketModule::registerEventInstancer( Rml::Core::EventInstancer *instancer ) {
+	Rml::Core::Factory::RegisterEventInstancer( instancer );
 }
 
-void RocketModule::registerEventListener( Rocket::Core::EventListenerInstancer *instancer ) {
-	Rocket::Core::Factory::RegisterEventListenerInstancer( instancer );
-	instancer->RemoveReference();
+void RocketModule::registerEventListener( Rml::Core::EventListenerInstancer *instancer ) {
+	Rml::Core::Factory::RegisterEventListenerInstancer( instancer );
 }
 
-Rocket::Core::Context *RocketModule::contextForId( int contextId ) {
+Rml::Core::Context *RocketModule::contextForId( int contextId ) {
 	switch( contextId ) {
 		case UI_CONTEXT_MAIN:
 			return contextMain;
-		case UI_CONTEXT_QUICK:
+		case UI_CONTEXT_OVERLAY:
 			return contextQuick;
 		default:
-			assert( contextId != UI_CONTEXT_MAIN && contextId != UI_CONTEXT_QUICK );
+			assert( contextId != UI_CONTEXT_MAIN && contextId != UI_CONTEXT_OVERLAY );
 			return NULL;
 	}
 }
 
-int RocketModule::idForContext( Rocket::Core::Context *context ) {
+int RocketModule::idForContext( Rml::Core::Context *context ) {
 	if( context == contextMain ) {
 		return UI_CONTEXT_MAIN;
 	}
 	if( context == contextQuick ) {
-		return UI_CONTEXT_QUICK;
+		return UI_CONTEXT_OVERLAY;
 	}
 	return UI_NUM_CONTEXTS;
-}
-
-// Load the mouse cursor and release the caller's reference:
-// NOTE: be sure to use it before initRocket( .. ) function
-void RocketModule::loadCursor( int contextId, const String& rmlCursor ) {
-	Rocket::Core::ElementDocument* cursor = contextForId( contextId )->LoadMouseCursor( rmlCursor );
-
-	if( cursor ) {
-		cursor->RemoveReference();
-	}
-}
-
-void RocketModule::hideCursor( int contextId, unsigned int addBits, unsigned int clearBits ) {
-	if( contextId == UI_CONTEXT_QUICK ) {
-		contextQuick->ShowMouseCursor( false );
-		return;
-	}
-
-	hideCursorBits = ( hideCursorBits & ~clearBits ) | addBits;
-	contextForId( contextId )->ShowMouseCursor( hideCursorBits == 0 );
 }
 
 void RocketModule::update( void ) {
@@ -427,9 +392,9 @@ void RocketModule::registerCustoms() {
 
 	// Soft keyboard listener
 	registerElement( "input",
-					 __new__( GenericElementInstancerSoftKeyboard<Rocket::Controls::ElementFormControlInput> )() );
+					 __new__( GenericElementInstancerSoftKeyboard<Rml::Controls::ElementFormControlInput> )() );
 	registerElement( "textarea",
-					 __new__( GenericElementInstancerSoftKeyboard<Rocket::Controls::ElementFormControlTextArea> )() );
+					 __new__( GenericElementInstancerSoftKeyboard<Rml::Controls::ElementFormControlTextArea> )() );
 
 	// other widgets
 	registerElement( "keyselect", GetKeySelectInstancer() );
@@ -445,7 +410,6 @@ void RocketModule::registerCustoms() {
 	registerElement( "idiv", GetInlineDivInstancer() );
 	registerElement( "img", GetImageWidgetInstancer() );
 	registerElement( "field", GetElementFieldInstancer() );
-	registerElement( "video", GetVideoInstancer() );
 	registerElement( "iframe", GetIFrameWidgetInstancer() );
 	registerElement( "l10n", GetElementL10nInstancer() );
 	registerElement( "blur", GetElementBlurInstancer() );
@@ -459,7 +423,6 @@ void RocketModule::registerCustoms() {
 
 	// inline script events
 	scriptEventListenerInstancer = ASUI::GetScriptEventListenerInstancer();
-	scriptEventListenerInstancer->AddReference();
 
 	registerEventListener( scriptEventListenerInstancer );
 
@@ -468,26 +431,22 @@ void RocketModule::registerCustoms() {
 
 	//
 	// DECORATORS
-	registerDecorator( "gradient", GetGradientDecoratorInstancer() );
-	registerDecorator( "ninepatch", GetNinePatchDecoratorInstancer() );
+	registerDecorator( "svg", GetSVGDecoratorInstancer() );
 
 	//
 	// GLOBAL CUSTOM PROPERTIES
 
-	Rocket::Core::StyleSheetSpecification::RegisterProperty( "background-music", "", false ).AddParser( "string" );
+	Rml::Core::StyleSheetSpecification::RegisterParser( "sound", new PropertyParserSound() );
 
-	Rocket::Core::StyleSheetSpecification::RegisterParser( "sound", new PropertyParserSound() );
-
-	Rocket::Core::StyleSheetSpecification::RegisterProperty( "sound-hover", "", false )
+	Rml::Core::StyleSheetSpecification::RegisterProperty( "sound-hover", "", false )
 	.AddParser( "sound" );
-	Rocket::Core::StyleSheetSpecification::RegisterProperty( "sound-click", "", false )
+	Rml::Core::StyleSheetSpecification::RegisterProperty( "sound-click", "", false )
 	.AddParser( "sound" );
 }
 
 void RocketModule::unregisterCustoms() {
 	if( scriptEventListenerInstancer ) {
 		ASUI::ReleaseScriptEventListenersFunctions( scriptEventListenerInstancer );
-		scriptEventListenerInstancer->RemoveReference();
 		scriptEventListenerInstancer = NULL;
 	}
 }

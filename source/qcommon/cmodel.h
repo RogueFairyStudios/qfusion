@@ -29,6 +29,9 @@ struct cmodel_s *CM_LoadMap( cmodel_state_t *cms, const char *name, bool clientl
 struct cmodel_s *CM_InlineModel( cmodel_state_t *cms, int num ); // 1, 2, etc
 char *CM_LoadMapMessage( char *name, char *message, int size );
 
+dvis_t *CM_PVSData( cmodel_state_t *cms );
+dvis_t *CM_PHSData( cmodel_state_t *cms );
+
 int CM_NumClusters( cmodel_state_t *cms );
 int CM_NumAreas( cmodel_state_t *cms );
 int CM_NumInlineModels( cmodel_state_t *cms );
@@ -46,6 +49,8 @@ int CM_TransformedPointContents( cmodel_state_t *cms, vec3_t p, struct cmodel_s 
 
 void CM_TransformedBoxTrace( cmodel_state_t *cms, trace_t *tr, vec3_t start, vec3_t end, vec3_t mins, vec3_t maxs,
 							 struct cmodel_s *cmodel, int brushmask, vec3_t origin, vec3_t angles );
+
+void CM_RoundUpToHullSize( cmodel_state_t *cms, vec3_t mins, vec3_t maxs, struct cmodel_s *cmodel );
 
 int CM_ClusterRowSize( cmodel_state_t *cms );
 int CM_AreaRowSize( cmodel_state_t *cms );
@@ -69,7 +74,6 @@ void CM_WritePortalState( cmodel_state_t *cms, int file );
 void CM_ReadPortalState( cmodel_state_t *cms, int file );
 
 void CM_MergePVS( cmodel_state_t *cms, const vec3_t org, uint8_t *out );
-void CM_MergePHS( cmodel_state_t *cms, int cluster, uint8_t *out );
 int CM_MergeVisSets( cmodel_state_t *cms, const vec3_t org, uint8_t *pvs, uint8_t *areabits );
 
 bool CM_InPVS( cmodel_state_t *cms, const vec3_t p1, const vec3_t p2 );
@@ -80,6 +84,14 @@ bool CM_LeafsInPVS( cmodel_state_t *cms, int leafnum1, int leafnum2 );
 cmodel_state_t *CM_New( void *mempool );
 void CM_AddReference( cmodel_state_t *cms );
 void CM_ReleaseReference( cmodel_state_t *cms );
+
+/*
+* CM_ThreadLocalCopy
+*
+* Returns a shallow copy of the collision model instance, for performing
+* ray and box tracing in a thread-safe manner.
+*/
+cmodel_state_t *CM_ThreadLocalCopy( cmodel_state_t *cms, void *mempool );
 
 //
 void CM_Init( void );

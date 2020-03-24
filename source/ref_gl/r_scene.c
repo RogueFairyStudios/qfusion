@@ -47,6 +47,14 @@ static void R_RenderDebugBounds( void );
 * R_ClearScene
 */
 void R_ClearScene( void ) {
+	R_ClearRefInstStack();
+
+	R_FrameCache_Clear();
+
+	R_ClearSkeletalCache();
+
+	R_ClearDebugBounds();
+
 	rsc.numLocalEntities = 0;
 	rsc.numDlights = 0;
 	rsc.numPolys = 0;
@@ -89,14 +97,49 @@ void R_ClearScene( void ) {
 
 	rsc.numBmodelEntities = 0;
 
-	rsc.renderedShadowBits = 0;
 	rsc.frameCount++;
+}
 
-	R_ClearDebugBounds();
+/*
+* R_CacheSceneEntity
+*/
+static void R_CacheSceneEntity( entity_t *e ) {
+	entSceneCache_t *cache = R_ENTCACHE( e );
 
-	R_ClearShadowGroups();
+	switch( e->rtype ) {
+	case RT_MODEL:
+		if( !e->model ) {
+			cache->mod_type = mod_bad;
+			return;
+		}
 
-	R_ClearSkeletalCache();
+		cache->mod_type = e->model->type;
+		cache->radius = 0;
+		cache->rotated = false;
+		ClearBounds( cache->mins, cache->maxs );
+		ClearBounds( cache->absmins, cache->absmaxs );
+
+		switch( e->model->type ) {
+		case mod_alias:
+			R_CacheAliasModelEntity( e );
+			break;
+		case mod_skeletal:
+			R_CacheSkeletalModelEntity( e );
+			break;
+		case mod_brush:
+			R_CacheBrushModelEntity( e );
+			break;
+		default:
+			e->model->type = mod_bad;
+			break;
+		}
+		break;
+	case RT_SPRITE:
+		R_CacheSpriteEntity( e );
+		break;
+	default:
+		break;
+	}
 }
 
 /*
@@ -112,22 +155,19 @@ void R_AddEntityToScene( const entity_t *ent ) {
 		entity_t *de = R_NUM2ENT( eNum );
 
 		*de = *ent;
-		if( r_outlines_scale->value <= 0 ) {
-			de->outlineHeight = 0;
-		}
-		rsc.entShadowBits[eNum] = 0;
-		rsc.entShadowGroups[eNum] = 0;
 
 		if( de->rtype == RT_MODEL ) {
 			if( de->model && de->model->type == mod_brush ) {
-				rsc.bmodelEntities[rsc.numBmodelEntities++] = de;
-			}
-			if( !( de->renderfx & RF_NOSHADOW ) ) {
-				R_AddLightOccluder( de ); // build groups and mark shadow casters
+				de->flags |= RF_FORCENOLOD;
+				rsc.bmodelEntities[rsc.numBmodelEntities++] = eNum;
 			}
 		} else if( de->rtype == RT_SPRITE ) {
 			// simplifies further checks
 			de->model = NULL;
+			de->flags |= RF_FORCENOLOD;
+			if( !de->customShader || de->radius <= 0 || de->scale <= 0 ) {
+				return;
+			}
 		}
 
 		if( de->renderfx & RF_ALPHAHACK ) {
@@ -135,6 +175,12 @@ void R_AddEntityToScene( const entity_t *ent ) {
 				de->renderfx &= ~RF_ALPHAHACK;
 			}
 		}
+
+		if( !r_lerpmodels->integer ) {
+			de->backlerp = 0;
+		}
+
+		R_CacheSceneEntity( de );
 
 		rsc.numEntities++;
 
@@ -152,22 +198,30 @@ void R_AddEntityToScene( const entity_t *ent ) {
 * R_AddLightToScene
 */
 void R_AddLightToScene( const vec3_t org, float intensity, float r, float g, float b ) {
-	if( ( rsc.numDlights < MAX_DLIGHTS ) && intensity && ( r != 0 || g != 0 || b != 0 ) ) {
-		dlight_t *dl = &rsc.dlights[rsc.numDlights];
+	rtlight_t *dl;
+	vec3_t color;
 
-		VectorCopy( org, dl->origin );
-		dl->intensity = intensity * DLIGHT_SCALE;
-		dl->color[0] = r;
-		dl->color[1] = g;
-		dl->color[2] = b;
-
-		if( r_lighting_grayscale->integer ) {
-			vec_t grey = ColorGrayscale( dl->color );
-			dl->color[0] = dl->color[1] = dl->color[2] = bound( 0, grey, 1 );
-		}
-
-		rsc.numDlights++;
+	if( rsc.numDlights >= MAX_DLIGHTS ) {
+		return;
 	}
+	if( !intensity || ( r == 0 && g == 0 && b == 0 ) ) {
+		return;
+	}
+
+	VectorSet( color, r, g, b );
+	if( r_lighting_grayscale->integer ) {
+		vec_t grey = ColorGrayscale( color );
+		color[0] = color[1] = color[2] = Q_bound( 0, grey, 1 );
+	} else {
+		VectorScale( color, 1.0 / DLIGHT_SCALE, color );
+	}
+
+	dl = &rsc.dlights[rsc.numDlights];
+	R_InitRtLight( dl, org, axis_identity, intensity * DLIGHT_SCALE, color );
+	dl->worldModel = rsh.worldModel;
+	dl->shadow = dl->intensity >= DLIGHT_MIN_SHADOW_RADIUS;
+
+	rsc.numDlights++;
 }
 
 /*
@@ -234,112 +288,6 @@ void R_AddLightStyleToScene( int style, float r, float g, float b ) {
 }
 
 /*
-* R_BlitTextureToScrFbo
-*/
-static void R_BlitTextureToScrFbo( const refdef_t *fd, image_t *image, int dstFbo,
-								   int program_type, const vec4_t color, int blendMask, int numShaderImages, image_t **shaderImages,
-								   int iParam0 ) {
-	int x, y;
-	int w, h, fw, fh;
-	static char s_name[] = "$builtinpostprocessing";
-	static shaderpass_t p;
-	static shader_t s;
-	int i;
-	static tcmod_t tcmod;
-	mat4_t m;
-
-	assert( rsh.postProcessingVBO );
-	if( numShaderImages >= MAX_SHADER_IMAGES ) {
-		numShaderImages = MAX_SHADER_IMAGES;
-	}
-
-	// blit + flip using a static mesh to avoid redundant buffer uploads
-	// (also using custom PP effects like FXAA with the stream VBO causes
-	// Adreno to mark the VBO as "slow" (due to some weird bug)
-	// for the rest of the frame and drop FPS to 10-20).
-	RB_FlushDynamicMeshes();
-
-	RB_BindFrameBufferObject( dstFbo );
-
-	if( !dstFbo ) {
-		// default framebuffer
-		// set the viewport to full resolution
-		// but keep the scissoring region
-		x = fd->x;
-		y = fd->y;
-		w = fw = fd->width;
-		h = fh = fd->height;
-		RB_Viewport( 0, 0, glConfig.width, glConfig.height );
-		RB_Scissor( rn.scissor[0], rn.scissor[1], rn.scissor[2], rn.scissor[3] );
-	} else {
-		// aux framebuffer
-		// set the viewport to full resolution of the framebuffer (without the NPOT padding if there's one)
-		// draw quad on the whole framebuffer texture
-		// set scissor to default framebuffer resolution
-		image_t *cb = RFB_GetObjectTextureAttachment( dstFbo, false, 0 );
-		x = 0;
-		y = 0;
-		w = fw = rf.frameBufferWidth;
-		h = fh = rf.frameBufferHeight;
-		if( cb ) {
-			fw = cb->upload_width;
-			fh = cb->upload_height;
-		}
-		RB_Viewport( 0, 0, w, h );
-		RB_Scissor( 0, 0, glConfig.width, glConfig.height );
-	}
-
-	s.vattribs = VATTRIB_POSITION_BIT | VATTRIB_TEXCOORDS_BIT;
-	s.sort = SHADER_SORT_NEAREST;
-	s.numpasses = 1;
-	s.name = s_name;
-	s.passes = &p;
-
-	p.rgbgen.type = RGB_GEN_IDENTITY;
-	p.alphagen.type = ALPHA_GEN_IDENTITY;
-	p.tcgen = TC_GEN_NONE;
-	p.images[0] = image;
-	for( i = 1; i < numShaderImages + 1; i++ ) {
-		if( i >= MAX_SHADER_IMAGES ) {
-			break;
-		}
-		p.images[i] = shaderImages[i - 1];
-	}
-	for( ; i < MAX_SHADER_IMAGES; i++ )
-		p.images[i] = NULL;
-	p.flags = blendMask | SHADERPASS_NOSRGB;
-	p.program_type = program_type;
-	p.anim_numframes = iParam0;
-
-	if( !dstFbo ) {
-		tcmod.type = TC_MOD_TRANSFORM;
-		tcmod.args[0] = ( float )( w ) / ( float )( image->upload_width );
-		tcmod.args[1] = ( float )( h ) / ( float )( image->upload_height );
-		tcmod.args[4] = ( float )( x ) / ( float )( image->upload_width );
-		tcmod.args[5] = ( float )( image->upload_height - h - y ) / ( float )( image->upload_height );
-		p.numtcmods = 1;
-		p.tcmods = &tcmod;
-	} else {
-		p.numtcmods = 0;
-	}
-
-	Matrix4_Identity( m );
-	Matrix4_Scale2D( m, fw, fh );
-	Matrix4_Translate2D( m, x, y );
-	RB_LoadObjectMatrix( m );
-
-	RB_BindShader( NULL, &s, NULL );
-	RB_BindVBO( rsh.postProcessingVBO->index, GL_TRIANGLES );
-	RB_DrawElements( 0, 4, 0, 6, 0, 0, 0, 0 );
-
-	RB_LoadObjectMatrix( mat4x4_identity );
-
-	// restore 2D viewport and scissor
-	RB_Viewport( 0, 0, rf.frameBufferWidth, rf.frameBufferHeight );
-	RB_Scissor( 0, 0, rf.frameBufferWidth, rf.frameBufferHeight );
-}
-
-/*
 * R_BlurTextureToScrFbo
 *
 * Performs Kawase blur which approximates standard Gaussian blur in multiple passes.
@@ -391,12 +339,41 @@ void R_RenderScene( const refdef_t *fd ) {
 		return;
 	}
 
-	R_Set2DMode( false );
+	R_End2D();
 
 	RB_SetTime( fd->time );
 
 	if( !( fd->rdflags & RDF_NOWORLDMODEL ) ) {
 		rsc.refdef = *fd;
+
+		if( rsc.worldModelSequence != rsh.worldModelSequence ) {
+			rsc.frameCount = !rsc.frameCount;
+			rsc.worldModelSequence = rsh.worldModelSequence;
+
+			R_WaitWorldModel();
+		}
+
+		// FIXME: find a better place for this
+		if( rsh.worldBrushModel ) {
+			bool skyUpdated = R_UpdateWorldRtSkyLights( rsh.worldModel );
+
+			if( r_lighting_realtime_world->modified || r_lighting_realtime_world_shadows->modified || skyUpdated ) {
+				if( r_lighting_realtime_world_shadows->integer ) {
+					unsigned i;
+
+					for( i = 0; i < rsh.worldBrushModel->numRtLights; i++ ) {
+						R_CompileRtLight( rsh.worldBrushModel->rtLights + i );
+					}
+
+					for( i = 0; i < rsh.worldBrushModel->numRtSkyLights; i++ ) {
+						R_CompileRtLight( rsh.worldBrushModel->rtSkyLights + i );
+					}
+				}
+			}
+
+			r_lighting_realtime_world->modified = false;
+			r_lighting_realtime_world_shadows->modified = false;
+		}
 	}
 
 	rn.refdef = *fd;
@@ -408,16 +385,19 @@ void R_RenderScene( const refdef_t *fd ) {
 
 	rn.renderFlags = RF_NONE;
 
+	rn.nearClip = Z_NEAR;
 	rn.farClip = R_DefaultFarClip();
+	rn.polygonFactor = POLYOFFSET_FACTOR;
+	rn.polygonUnits = POLYOFFSET_UNITS;
 	rn.clipFlags = 15;
-	if( rsh.worldModel && !( fd->rdflags & RDF_NOWORLDMODEL ) && rsh.worldBrushModel->globalfog ) {
-		rn.clipFlags |= 16;
+	if( rsh.worldBrushModel && !( fd->rdflags & RDF_NOWORLDMODEL ) && rsh.worldBrushModel->globalfog ) {
+		rn.clipFlags |= 32; // farlip
 	}
 	rn.meshlist = &r_worldlist;
 	rn.portalmasklist = &r_portalmasklist;
-	rn.shadowBits = 0;
-	rn.dlightBits = 0;
-	rn.shadowGroup = NULL;
+	rn.numEntities = 0;
+	rn.numRealtimeLights = 0;
+	rn.rtLight = NULL;
 
 	rn.st = &rsh.st;
 	rn.renderTarget = 0;
@@ -430,33 +410,20 @@ void R_RenderScene( const refdef_t *fd ) {
 	}
 
 	if( !( fd->rdflags & RDF_NOWORLDMODEL ) ) {
-		if( !glConfig.ext.framebuffer_multisample ) {
-			samples = 0;
-		} else {
-			samples = bound( 0, r_samples->integer, glConfig.maxFramebufferSamples );
-		}
+		bool useFloat;
 
-		if( glConfig.sSRGB && rsh.stf.screenTex ) {
+		useFloat = glConfig.sSRGB && rsh.stf.screenTex;
+		if( useFloat ) {
 			rn.st = &rsh.stf;
 		}
 
 		// reload the multisample framebuffer if needed
-		if( samples > 0 && (  !rn.st->multisampleTarget || RFB_GetSamples( rn.st->multisampleTarget ) != samples ) ) {
-			int width, height;
-			R_GetRenderBufferSize( glConfig.width, glConfig.height, 0, IT_SPECIAL, &width, &height );
-
-			if( rn.st->multisampleTarget ) {
-				RFB_UnregisterObject( rn.st->multisampleTarget );
+		samples = R_MultisampleSamples( r_samples->integer );
+		if( samples > 0 ) {
+			rn.renderTarget = R_RegisterMultisampleTarget( rn.st, samples, useFloat, false );
+			if( rn.renderTarget == 0 ) {
+				samples = 0;
 			}
-			rn.st->multisampleTarget = RFB_RegisterObject( width, height, true, true, glConfig.stencilBits != 0, true,
-														   samples, rn.st == &rsh.stf );
-		}
-
-		// ignore r_samples values below 2 or if we failed to allocate the multisample fb
-		if( samples > 1 && rn.st->multisampleTarget != 0 ) {
-			rn.renderTarget = rn.st->multisampleTarget;
-		} else {
-			samples = 0;
 		}
 
 		if( r_soft_particles->integer && ( rn.st->screenTex != NULL ) ) {
@@ -496,27 +463,41 @@ void R_RenderScene( const refdef_t *fd ) {
 				}
 			}
 		}
+	} else {
+		fbFlags = 0;
+		rn.renderTarget = rf.renderTarget;
 	}
 
 	// clip new scissor region to the one currently set
 	Vector4Set( rn.scissor, fd->scissor_x, fd->scissor_y, fd->scissor_width, fd->scissor_height );
 	Vector4Set( rn.viewport, fd->x, fd->y, fd->width, fd->height );
 	VectorCopy( fd->vieworg, rn.pvsOrigin );
+	VectorCopy( fd->vieworg, rn.viewOrigin );
+	Matrix3_Copy( fd->viewaxis, rn.viewAxis );
+
 	VectorCopy( fd->vieworg, rn.lodOrigin );
+	rn.lodBias = r_lodbias->integer;
+	rn.lodScale = r_lodscale->value;
 
 	R_BindFrameBufferObject( 0 );
 
-	R_BuildShadowGroups();
+	R_SetupViewMatrices( fd );
+
+	R_SetupFrustum( fd, rn.nearClip, rn.farClip, rn.frustum, rn.frustumCorners );
+
+	R_SetupPVS( fd );
 
 	R_RenderView( fd );
 
-	R_RenderDebugSurface( fd );
+	if( !(fd->rdflags & RDF_NOWORLDMODEL) ) {
+		R_RenderDebugSurface( fd );
 
-	R_RenderDebugBounds();
+		R_RenderDebugLightVolumes();
 
-	R_BindFrameBufferObject( 0 );
+		R_RenderDebugBounds();
+	}
 
-	R_Set2DMode( true );
+	R_Begin2D( false );
 
 	if( !( fd->rdflags & RDF_NOWORLDMODEL ) ) {
 		ri.Mutex_Lock( rf.speedsMsgLock );
@@ -538,23 +519,23 @@ void R_RenderScene( const refdef_t *fd ) {
 		RB_BlitFrameBufferObject( rn.renderTarget, rn.st->screenTexCopy->fbo, bits, FBO_COPY_NORMAL, GL_NEAREST, 0, 0 );
 		ppSource = rn.st->screenTexCopy;
 	} else {
-		if( rn.renderTarget ) {
+		if( rn.renderTarget != rf.renderTarget ) {
 			ppSource = RFB_GetObjectTextureAttachment( rn.renderTarget, false, 0 );
 		} else {
 			ppSource = NULL;
 		}
 	}
 
-	if( fbFlags == PPFX_BIT_SOFT_PARTICLES ) {
-		// only blit soft particles directly when we don't have any other post processing
-		// otherwise use the soft particles FBO as the base texture on the next layer
-		// to avoid wasting time on resolves and the fragment shader to blit to a temp texture
+	if( ( ppSource != NULL ) && ( fbFlags == PPFX_BIT_SOFT_PARTICLES || fbFlags == 0 ) ) {
+		// blit soft particles or resolved MSAA to default FB as don't have any other post 
+		// processing effects, otherwise use the source FBO as the base texture on the next 
+		// layer to avoid wasting time on resolves in the fragment shader
 		R_BlitTextureToScrFbo( fd,
-							   ppSource, 0,
+							   ppSource, rf.renderTarget,
 							   GLSL_PROGRAM_TYPE_NONE,
 							   colorWhite, 0,
 							   0, NULL, 0 );
-		return;
+		goto done;
 	}
 
 	fbFlags &= ~PPFX_BIT_SOFT_PARTICLES;
@@ -590,7 +571,7 @@ void R_RenderScene( const refdef_t *fd ) {
 		}
 
 		R_BlitTextureToScrFbo( fd,
-							   ppSource, dest ? dest->fbo : 0,
+							   ppSource, dest ? dest->fbo : rf.renderTarget,
 							   GLSL_PROGRAM_TYPE_COLOR_CORRECTION,
 							   colorWhite, 0,
 							   numImages, images, 0 );
@@ -639,7 +620,7 @@ void R_RenderScene( const refdef_t *fd ) {
 
 		dest = fbFlags ? rsh.st.screenPPCopies[ppFrontBuffer] : NULL;
 		R_BlitTextureToScrFbo( fd,
-							   ppSource, dest ? dest->fbo : 0,
+							   ppSource, dest ? dest->fbo : rf.renderTarget,
 							   GLSL_PROGRAM_TYPE_COLOR_CORRECTION,
 							   colorWhite, 0,
 							   numImages, images, 0 );
@@ -654,21 +635,26 @@ void R_RenderScene( const refdef_t *fd ) {
 
 		// not that FXAA only works on LDR input
 		R_BlitTextureToScrFbo( fd,
-							   ppSource, 0,
+							   ppSource, rf.renderTarget,
 							   GLSL_PROGRAM_TYPE_FXAA,
 							   colorWhite, 0,
 							   0, NULL, 0 );
-		return;
+		goto done;
 	}
 
 	if( fbFlags & PPFX_BIT_BLUR ) {
 		ppSource = R_BlurTextureToScrFbo( fd, ppSource, rsh.st.screenPPCopies[ppFrontBuffer] );
 		R_BlitTextureToScrFbo( fd,
-							   ppSource, 0,
+							   ppSource, rf.renderTarget,
 							   GLSL_PROGRAM_TYPE_NONE,
 							   colorWhite, 0,
 							   0, NULL, 0 );
 	}
+
+done:
+	Vector4Set( rn.scissor, 0, 0, glConfig.width, glConfig.height );
+	Vector4Set( rn.viewport, 0, 0, glConfig.width, glConfig.height );
+	R_BindFrameBufferObject( rf.renderTarget );
 }
 
 /*
@@ -683,13 +669,16 @@ void R_BlurScreen( void ) {
 	fd->width = rf.frameBufferWidth;
 	fd->height = rf.frameBufferHeight;
 
+	// render previously batched 2D geometry, if any
 	RB_FlushDynamicMeshes();
 
-	RB_BlitFrameBufferObject( 0, rsh.st.screenPPCopies[0]->fbo, GL_COLOR_BUFFER_BIT, FBO_COPY_NORMAL, GL_NEAREST, 0, 0 );
+	R_Begin2D( false );
+
+	RB_BlitFrameBufferObject( rf.renderTarget, rsh.st.screenPPCopies[0]->fbo, GL_COLOR_BUFFER_BIT, FBO_COPY_NORMAL, GL_NEAREST, 0, 0 );
 
 	ppSource = R_BlurTextureToScrFbo( fd, rsh.st.screenPPCopies[0], rsh.st.screenPPCopies[1] );
 
-	R_BlitTextureToScrFbo( fd, ppSource, 0, GLSL_PROGRAM_TYPE_NONE, colorWhite, 0, 0, NULL, 0 );
+	R_BlitTextureToScrFbo( fd, ppSource, rf.renderTarget, GLSL_PROGRAM_TYPE_NONE, colorWhite, 0, 0, NULL, 0 );
 }
 
 /*
@@ -701,9 +690,8 @@ BOUNDING BOXES
 */
 
 typedef struct {
-	vec3_t mins;
-	vec3_t maxs;
-	byte_vec4_t color;
+	vec4_t corners[8];
+	byte_vec4_t colors[8];
 } r_debug_bound_t;
 
 static unsigned r_num_debug_bounds;
@@ -718,16 +706,17 @@ static void R_ClearDebugBounds( void ) {
 }
 
 /*
-* R_AddDebugBounds
+* R_AddDebugCorners
 */
-void R_AddDebugBounds( const vec3_t mins, const vec3_t maxs, const byte_vec4_t color ) {
-	unsigned i;
+void R_AddDebugCorners( const vec3_t corners[8], const vec4_t color ) {
+	unsigned i, j, k;
+	r_debug_bound_t *b;
 
 	i = r_num_debug_bounds;
 	r_num_debug_bounds++;
 
 	if( r_num_debug_bounds > r_debug_bounds_current_size ) {
-		r_debug_bounds_current_size = ALIGN( r_num_debug_bounds, 256 );
+		r_debug_bounds_current_size = Q_ALIGN( r_num_debug_bounds, 256 );
 		if( r_debug_bounds ) {
 			r_debug_bounds = R_Realloc( r_debug_bounds, r_debug_bounds_current_size * sizeof( r_debug_bound_t ) );
 		} else {
@@ -735,27 +724,38 @@ void R_AddDebugBounds( const vec3_t mins, const vec3_t maxs, const byte_vec4_t c
 		}
 	}
 
-	VectorCopy( mins, r_debug_bounds[i].mins );
-	VectorCopy( maxs, r_debug_bounds[i].maxs );
-	Vector4Copy( color, r_debug_bounds[i].color );
+	b = &r_debug_bounds[i];
+
+	for( j = 0; j < 8; j++ ) {
+		VectorCopy( corners[j], b->corners[j] );
+		b->corners[j][3] = 1;
+
+		for( k = 0; k < 3; k++ ) {
+			b->colors[j][k] = color[k] * 255;
+		}
+
+		b->colors[j][3] = 255;
+	}
+}
+
+/*
+* R_AddDebugBounds
+*/
+void R_AddDebugBounds( const vec3_t mins, const vec3_t maxs, const vec4_t color ) {
+	vec3_t corners[8];
+
+	BoundsCorners( mins, maxs, corners );
+
+	R_AddDebugCorners( corners, color );
 }
 
 /*
 * R_RenderDebugBounds
 */
 static void R_RenderDebugBounds( void ) {
-	unsigned i, j;
-	const vec_t *mins, *maxs;
-	const uint8_t *color;
+	unsigned i;
 	mesh_t mesh;
-	vec4_t verts[8];
-	byte_vec4_t colors[8];
-	elem_t elems[24] =
-	{
-		0, 1, 1, 3, 3, 2, 2, 0,
-		0, 4, 1, 5, 2, 6, 3, 7,
-		4, 5, 5, 7, 7, 6, 6, 4
-	};
+	elem_t elems[24];
 
 	if( !r_num_debug_bounds ) {
 		return;
@@ -763,27 +763,24 @@ static void R_RenderDebugBounds( void ) {
 
 	memset( &mesh, 0, sizeof( mesh ) );
 	mesh.numVerts = 8;
-	mesh.xyzArray = verts;
 	mesh.numElems = 24;
 	mesh.elems = elems;
-	mesh.colorsArray[0] = colors;
 
 	RB_SetShaderStateMask( ~0, GLSTATE_NO_DEPTH_TEST );
 
+	RB_SetLightstyle( NULL, NULL );
+
+	RB_SetRtLightParams( 0, NULL, 0, NULL );
+
+	for( i = 0; i < 24; i++ ) {
+		elems[i] = r_boxedges[i];
+	}
+
 	for( i = 0; i < r_num_debug_bounds; i++ ) {
-		mins = r_debug_bounds[i].mins;
-		maxs = r_debug_bounds[i].maxs;
-		color = r_debug_bounds[i].color;
+		mesh.xyzArray = r_debug_bounds[i].corners;
+		mesh.colorsArray[0] = r_debug_bounds[i].colors;
 
-		for( j = 0; j < 8; j++ ) {
-			verts[j][0] = ( ( j & 1 ) ? mins[0] : maxs[0] );
-			verts[j][1] = ( ( j & 2 ) ? mins[1] : maxs[1] );
-			verts[j][2] = ( ( j & 4 ) ? mins[2] : maxs[2] );
-			verts[j][3] = 1.0f;
-			Vector4Copy( color, colors[j] );
-		}
-
-		RB_AddDynamicMesh( rsc.worldent, rsh.whiteShader, NULL, NULL, 0, &mesh, GL_LINES, 0.0f, 0.0f );
+		RB_AddDynamicMesh( rsc.worldent, rsh.whiteShader, NULL, NULL, &mesh, GL_LINES, 0.0f, 0.0f );
 	}
 
 	RB_FlushDynamicMeshes();

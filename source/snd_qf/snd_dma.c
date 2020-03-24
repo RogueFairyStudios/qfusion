@@ -32,7 +32,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define RIGHT   1
 #define UP      2
 
-channel_t channels[MAX_CHANNELS];
+channel_t s_channels[MAX_CHANNELS];
 
 bool snd_initialized = false;
 
@@ -107,12 +107,7 @@ static void S_SoundList_f( void ) {
 		if( sc ) {
 			size = sc->length * sc->width * sc->channels;
 			total += size;
-			if( sc->loopstart < sc->length ) {
-				Com_Printf( "L" );
-			} else {
-				Com_Printf( " " );
-			}
-			Com_Printf( "(%2db) %6i : %s\n", sc->width * 8, size, sfx->name );
+			Com_Printf( " (%2db) %6i : %s\n", sc->width * 8, size, sfx->name );
 		} else {
 			if( sfx->name[0] == '*' ) {
 				Com_Printf( "  placeholder : %s\n", sfx->name );
@@ -212,8 +207,8 @@ channel_t *S_PickChannel( int entnum, int entchannel ) {
 	life_left = 0x7fffffff;
 	for( ch_idx = 0; ch_idx < MAX_CHANNELS; ch_idx++ ) {
 		if( entchannel != 0 // channel 0 never overrides
-			&& channels[ch_idx].entnum == entnum
-			&& channels[ch_idx].entchannel == entchannel ) { // always override sound from same entity
+			&& s_channels[ch_idx].entnum == entnum
+			&& s_channels[ch_idx].entchannel == entchannel ) { // always override sound from same entity
 			first_to_die = ch_idx;
 			break;
 		}
@@ -223,8 +218,8 @@ channel_t *S_PickChannel( int entnum, int entchannel ) {
 		//if (channels[ch_idx].entnum == cl.playernum+1 && entnum != cl.playernum+1 && channels[ch_idx].sfx)
 		//	continue;
 
-		if( channels[ch_idx].end < life_left + paintedtime ) {
-			life_left = channels[ch_idx].end - paintedtime;
+		if( s_channels[ch_idx].end < life_left + paintedtime ) {
+			life_left = s_channels[ch_idx].end - paintedtime;
 			first_to_die = ch_idx;
 		}
 	}
@@ -233,7 +228,7 @@ channel_t *S_PickChannel( int entnum, int entchannel ) {
 		return NULL;
 	}
 
-	ch = &channels[first_to_die];
+	ch = &s_channels[first_to_die];
 	memset( ch, 0, sizeof( *ch ) );
 
 	return ch;
@@ -536,7 +531,7 @@ static void S_ClearPlaysounds( void ) {
 		s_playsounds[i].next->prev = &s_playsounds[i];
 	}
 
-	memset( channels, 0, sizeof( channels ) );
+	memset( s_channels, 0, sizeof( s_channels ) );
 }
 
 // =======================================================================
@@ -1165,7 +1160,7 @@ static void S_Spatialize( void ) {
 	S_FreeIdleRawSounds();
 
 	// update spatialization for dynamic sounds
-	ch = channels;
+	ch = s_channels;
 	for( i = 0; i < MAX_CHANNELS; i++, ch++ ) {
 		if( !ch->sfx ) {
 			continue;
@@ -1205,7 +1200,7 @@ static void S_Update( void ) {
 	//
 	if( s_show->integer ) {
 		total = 0;
-		ch = channels;
+		ch = s_channels;
 		for( i = 0; i < MAX_CHANNELS; i++, ch++ )
 			if( ch->sfx && ( ch->leftvol || ch->rightvol ) ) {
 				Com_Printf( "%3i %3i %s\n", ch->leftvol, ch->rightvol, ch->sfx->name );

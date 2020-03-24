@@ -294,7 +294,7 @@ static void CG_ElectroRings( const vec3_t start, const vec3_t end, const vec4_t 
 	float timeFrac;
 	float space = 15.0f;
 	lentity_t *le;
-	struct shader_s *s = CG_MediaShader( cgs.media.shaderElectroBeamRing );
+	struct shader_s *s = cgs.media.shaderElectroBeamRing;
 
 	VectorSubtract( end, start, dir );
 	len = VectorNormalize( dir );
@@ -346,7 +346,7 @@ void CG_ElectroTrail2( const vec3_t start, const vec3_t end, int team ) {
 void CG_ImpactSmokePuff( const vec3_t origin, const vec3_t dir, float radius, float alpha, int time, int speed ) {
 #define SMOKEPUFF_MAXVIEWDIST 700
 	lentity_t *le;
-	struct shader_s *shader = CG_MediaShader( cgs.media.shaderSmokePuff );
+	struct shader_s *shader = cgs.media.shaderSmokePuff;
 	vec3_t local_origin, local_dir;
 
 	if( CG_PointContents( origin ) & MASK_WATER ) {
@@ -411,7 +411,7 @@ void CG_BulletExplosion( const vec3_t pos, const vec_t *dir, const trace_t *trac
 		le = CG_AllocModel( LE_ALPHA_FADE, pos, angles, 3, //3 frames for weak
 							1, 0, 0, 1, //full white no inducted alpha
 							0, 0, 0, 0, //dlight
-							CG_MediaModel( cgs.media.modBulletExplode ),
+							cgs.media.modBulletExplode,
 							NULL );
 		le->ent.rotation = rand() % 360;
 		le->ent.scale = 1.0f;
@@ -425,7 +425,7 @@ void CG_BulletExplosion( const vec3_t pos, const vec_t *dir, const trace_t *trac
 		le = CG_AllocModel( LE_ALPHA_FADE, pos, angles, 3, //3 frames for weak
 							1, 1, 1, 1, //full white no inducted alpha
 							0, 0, 0, 0, //dlight
-							CG_MediaModel( cgs.media.modBulletExplode ),
+							cgs.media.modBulletExplode,
 							NULL );
 		le->ent.rotation = rand() % 360;
 		le->ent.scale = 1.0f;
@@ -434,7 +434,7 @@ void CG_BulletExplosion( const vec3_t pos, const vec_t *dir, const trace_t *trac
 		}
 
 		if( !( tr->surfFlags & SURF_NOMARKS ) ) {
-			CG_SpawnDecal( pos, local_dir, random() * 360, 8, 1, 1, 1, 1, 10, 1, false, CG_MediaShader( cgs.media.shaderBulletMark ) );
+			CG_SpawnDecal( pos, local_dir, random() * 360, 8, 1, 1, 1, 1, 10, 1, false, cgs.media.shaderBulletMark );
 		}
 	}
 }
@@ -457,7 +457,7 @@ void CG_BubbleTrail( const vec3_t start, const vec3_t end, int dist ) {
 	}
 
 	VectorScale( vec, dist, vec );
-	shader = CG_MediaShader( cgs.media.shaderWaterBubble );
+	shader = cgs.media.shaderWaterBubble;
 
 	for( i = 0; i < len; i += dist ) {
 		le = CG_AllocSprite( LE_ALPHA_FADE, move, 3, 10,
@@ -475,23 +475,24 @@ void CG_BubbleTrail( const vec3_t start, const vec3_t end, int dist ) {
 void CG_PlasmaExplosion( const vec3_t pos, const vec3_t dir, int fire_mode, float radius ) {
 	lentity_t *le;
 	vec3_t angles;
+	vec3_t origin;
 	float model_radius = PLASMA_EXPLOSION_MODEL_RADIUS;
 
 	VecToAngles( dir, angles );
+	VectorMA( pos, IMPACT_POINT_OFFSET, dir, origin );
 
 	if( fire_mode == FIRE_MODE_STRONG ) {
-		le = CG_AllocModel( LE_ALPHA_FADE, pos, angles, 4,
+		le = CG_AllocModel( LE_ALPHA_FADE, origin, angles, 4,
 							1, 1, 1, 1,
 							150, 0, 0.75, 0,
-							CG_MediaModel( cgs.media.modPlasmaExplosion ),
+							cgs.media.modPlasmaExplosion,
 							NULL );
 		le->ent.scale = radius / model_radius;
 	} else {
-
-		le = CG_AllocModel( LE_ALPHA_FADE, pos, angles, 4,
+		le = CG_AllocModel( LE_ALPHA_FADE, origin, angles, 4,
 							1, 1, 1, 1,
 							80, 0, 0.75, 0,
-							CG_MediaModel( cgs.media.modPlasmaExplosion ),
+							cgs.media.modPlasmaExplosion,
 							NULL );
 		le->ent.scale = radius / model_radius;
 	}
@@ -500,7 +501,7 @@ void CG_PlasmaExplosion( const vec3_t pos, const vec3_t dir, int fire_mode, floa
 
 	CG_SpawnDecal( pos, dir, 90, 16,
 				   1, 1, 1, 1, 4, 1, true,
-				   CG_MediaShader( cgs.media.shaderPlasmaMark ) );
+				   cgs.media.shaderPlasmaMark );
 }
 
 /*
@@ -509,28 +510,30 @@ void CG_PlasmaExplosion( const vec3_t pos, const vec3_t dir, int fire_mode, floa
 void CG_BoltExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode, int surfFlags ) {
 	lentity_t *le;
 	vec3_t angles;
+	vec3_t origin;
 
 	if( !CG_SpawnDecal( pos, dir, random() * 360, 12,
-						1, 1, 1, 1, 10, 1, true, CG_MediaShader( cgs.media.shaderElectroboltMark ) ) ) {
+						1, 1, 1, 1, 10, 1, true, cgs.media.shaderElectroboltMark ) ) {
 		if( surfFlags & ( SURF_SKY | SURF_NOMARKS | SURF_NOIMPACT ) ) {
 			return;
 		}
 	}
 
 	VecToAngles( dir, angles );
+	VectorMA( pos, IMPACT_POINT_OFFSET, dir, origin );
 
 	le = CG_AllocModel( LE_INVERSESCALE_ALPHA_FADE, pos, angles, 6, // 6 is time
 						1, 1, 1, 1, //full white no inducted alpha
 						250, 0.75, 0.75, 0.75, //white dlight
-						CG_MediaModel( cgs.media.modElectroBoltWallHit ), NULL );
+						cgs.media.modElectroBoltWallHit, NULL );
 
 	le->ent.rotation = rand() % 360;
 	le->ent.scale = ( fire_mode == FIRE_MODE_STRONG ) ? 1.5f : 1.0f;
 
 	// add white energy particles on the impact
-	CG_ImpactPuffParticles( pos, dir, 15, 0.75f, 1, 1, 1, 1, NULL );
+	CG_ImpactPuffParticles( origin, dir, 15, 0.75f, 1, 1, 1, 1, NULL );
 
-	trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxElectroboltHit ), pos, CHAN_AUTO,
+	trap_S_StartFixedSound( cgs.media.sfxElectroboltHit, origin, CHAN_AUTO,
 							cg_volume_effects->value, ATTN_STATIC );
 }
 
@@ -542,6 +545,7 @@ void CG_InstaExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode, i
 	vec4_t tcolor = { 0.65f, 0.0f, 0.26f, 1.0f };
 	lentity_t *le;
 	vec3_t angles;
+	vec3_t origin;
 
 	if( cg_teamColoredInstaBeams->integer && owner && ( owner < gs.maxclients + 1 ) ) {
 		team = cg_entities[owner].current.team;
@@ -553,28 +557,29 @@ void CG_InstaExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode, i
 		tcolor[2] *= 0.65f;
 	}
 
+	VecToAngles( dir, angles );
+	VectorMA( pos, IMPACT_POINT_OFFSET, dir, origin );
+
 	if( !CG_SpawnDecal( pos, dir, random() * 360, 12,
 						tcolor[0], tcolor[1], tcolor[2], 1.0f,
-						10, 1, true, CG_MediaShader( cgs.media.shaderInstagunMark ) ) ) {
+						10, 1, true, cgs.media.shaderInstagunMark ) ) {
 		if( surfFlags & ( SURF_SKY | SURF_NOMARKS | SURF_NOIMPACT ) ) {
 			return;
 		}
 	}
 
-	VecToAngles( dir, angles );
-
-	le = CG_AllocModel( LE_ALPHA_FADE, pos, angles, 6, // 6 is time
+	le = CG_AllocModel( LE_ALPHA_FADE, origin, angles, 6, // 6 is time
 						tcolor[0], tcolor[1], tcolor[2], 1,
 						250, 0.65, 0.65, 0.65, //white dlight
-						CG_MediaModel( cgs.media.modInstagunWallHit ), NULL );
+						cgs.media.modInstagunWallHit, NULL );
 
 	le->ent.rotation = rand() % 360;
 	le->ent.scale = ( fire_mode == FIRE_MODE_STRONG ) ? 1.5f : 1.0f;
 
 	// add white energy particles on the impact
-	CG_ImpactPuffParticles( pos, dir, 15, 0.75f, 1, 1, 1, 1, NULL );
+	CG_ImpactPuffParticles( origin, dir, 15, 0.75f, 1, 1, 1, 1, NULL );
 
-	trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxElectroboltHit ), pos, CHAN_AUTO,
+	trap_S_StartFixedSound( cgs.media.sfxElectroboltHit, origin, CHAN_AUTO,
 							cg_volume_effects->value, ATTN_STATIC );
 }
 
@@ -590,12 +595,12 @@ void CG_RocketExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode, 
 	VecToAngles( dir, angles );
 
 	if( fire_mode == FIRE_MODE_STRONG ) {
-		//trap_S_StartSound ( pos, 0, 0, CG_MediaSfx (cgs.media.sfxRocketLauncherStrongHit), cg_volume_effects->value, ATTN_NORM, 0 );
-		CG_SpawnDecal( pos, dir, random() * 360, radius * 0.5, 1, 1, 1, 1, 10, 1, false, CG_MediaShader( cgs.media.shaderExplosionMark ) );
+		//trap_S_StartSound ( pos, 0, 0, CG_RegisterSfx (cgs.media.sfxRocketLauncherStrongHit), cg_volume_effects->value, ATTN_NORM, 0 );
+		CG_SpawnDecal( pos, dir, random() * 360, radius * 0.5, 1, 1, 1, 1, 10, 1, false, cgs.media.shaderExplosionMark );
 
 	} else {
-		//trap_S_StartSound ( pos, 0, 0, CG_MediaSfx (cgs.media.sfxRocketLauncherWeakHit), cg_volume_effects->value, ATTN_NORM, 0 );
-		CG_SpawnDecal( pos, dir, random() * 360, radius * 0.25, 1, 1, 1, 1, 10, 1, false, CG_MediaShader( cgs.media.shaderExplosionMark ) );
+		//trap_S_StartSound ( pos, 0, 0, CG_RegisterSfx (cgs.media.sfxRocketLauncherWeakHit), cg_volume_effects->value, ATTN_NORM, 0 );
+		CG_SpawnDecal( pos, dir, random() * 360, radius * 0.25, 1, 1, 1, 1, 10, 1, false, cgs.media.shaderExplosionMark );
 	}
 
 	// animmap shader of the explosion
@@ -603,7 +608,7 @@ void CG_RocketExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode, 
 	le = CG_AllocSprite( LE_ALPHA_FADE, origin, radius * 0.5f, 8,
 						 1, 1, 1, 1,
 						 radius * 4, 0.8f, 0.6f, 0, // orange dlight
-						 CG_MediaShader( cgs.media.shaderRocketExplosion ) );
+						 cgs.media.shaderRocketExplosion );
 
 	VectorSet( vec, crandom() * expvelocity, crandom() * expvelocity, crandom() * expvelocity );
 	VectorScale( dir, expvelocity, le->velocity );
@@ -616,7 +621,7 @@ void CG_RocketExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode, 
 		le = CG_AllocSprite( LE_ALPHA_FADE, origin, radius, 3,
 							 1, 1, 1, 1,
 							 0, 0, 0, 0, // no dlight
-							 CG_MediaShader( cgs.media.shaderRocketExplosionRing ) );
+							 cgs.media.shaderRocketExplosionRing );
 
 		le->ent.rotation = rand() % 360;
 	}
@@ -630,9 +635,9 @@ void CG_RocketExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode, 
 	CG_ParticleExplosionEffect( pos, dir, 1, 0.5, 0, 32 );
 
 	if( fire_mode == FIRE_MODE_STRONG ) {
-		trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxRocketLauncherStrongHit ), pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
+		trap_S_StartFixedSound( cgs.media.sfxRocketLauncherStrongHit, pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
 	} else {
-		trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxRocketLauncherWeakHit ), pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
+		trap_S_StartFixedSound( cgs.media.sfxRocketLauncherWeakHit, pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
 	}
 
 	//jalfixme: add sound at water?
@@ -644,6 +649,7 @@ void CG_RocketExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode, 
 void CG_BladeImpact( const vec3_t pos, const vec3_t dir ) {
 	lentity_t *le;
 	vec3_t angles;
+	vec3_t origin;
 	vec3_t end;
 	vec3_t local_pos, local_dir;
 	trace_t trace;
@@ -658,40 +664,41 @@ void CG_BladeImpact( const vec3_t pos, const vec3_t dir ) {
 	}
 
 	VecToAngles( local_dir, angles );
+	VectorMA( pos, IMPACT_POINT_OFFSET, dir, origin );
 
 	if( trace.surfFlags & SURF_FLESH ||
 		( trace.ent > 0 && cg_entities[trace.ent].current.type == ET_PLAYER )
 		|| ( trace.ent > 0 && cg_entities[trace.ent].current.type == ET_CORPSE ) ) {
-		le = CG_AllocModel( LE_ALPHA_FADE, pos, angles, 3, //3 frames for weak
+		le = CG_AllocModel( LE_ALPHA_FADE, origin, angles, 3, //3 frames for weak
 							1, 1, 1, 1, //full white no inducted alpha
 							0, 0, 0, 0, //dlight
-							CG_MediaModel( cgs.media.modBladeWallHit ), NULL );
+							cgs.media.modBladeWallHit, NULL );
 		le->ent.rotation = rand() % 360;
 		le->ent.scale = 1.0f;
 
-		trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxBladeFleshHit[(int)( random() * 3 )] ), pos, CHAN_AUTO,
+		trap_S_StartFixedSound( cgs.media.sfxBladeFleshHit[(int)( random() * 3 )], origin, CHAN_AUTO,
 								cg_volume_effects->value, ATTN_NORM );
 	} else if( trace.surfFlags & SURF_DUST ) {
 		// throw particles on dust
 		CG_ParticleEffect( trace.endpos, trace.plane.normal, 0.30f, 0.30f, 0.25f, 30 );
 
 		//fixme? would need a dust sound
-		trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxBladeWallHit[(int)( random() * 2 )] ), pos, CHAN_AUTO,
+		trap_S_StartFixedSound( cgs.media.sfxBladeWallHit[(int)( random() * 2 )], origin, CHAN_AUTO,
 								cg_volume_effects->value, ATTN_NORM );
 	} else {
-		le = CG_AllocModel( LE_ALPHA_FADE, pos, angles, 3, //3 frames for weak
+		le = CG_AllocModel( LE_ALPHA_FADE, origin, angles, 3, //3 frames for weak
 							1, 1, 1, 1, //full white no inducted alpha
 							0, 0, 0, 0, //dlight
-							CG_MediaModel( cgs.media.modBladeWallHit ), NULL );
+							cgs.media.modBladeWallHit, NULL );
 		le->ent.rotation = rand() % 360;
 		le->ent.scale = 1.0f;
 
 		CG_ParticleEffect( trace.endpos, trace.plane.normal, 0.30f, 0.30f, 0.25f, 15 );
 
-		trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxBladeWallHit[(int)( random() * 2 )] ), pos, CHAN_AUTO,
+		trap_S_StartFixedSound( cgs.media.sfxBladeWallHit[(int)( random() * 2 )], origin, CHAN_AUTO,
 								cg_volume_effects->value, ATTN_NORM );
 		if( !( trace.surfFlags & SURF_NOMARKS ) ) {
-			CG_SpawnDecal( pos, dir, random() * 10, 8, 1, 1, 1, 1, 10, 1, false, CG_MediaShader( cgs.media.shaderBladeMark ) );
+			CG_SpawnDecal( pos, dir, random() * 10, 8, 1, 1, 1, 1, 10, 1, false, cgs.media.shaderBladeMark );
 		}
 	}
 }
@@ -699,18 +706,17 @@ void CG_BladeImpact( const vec3_t pos, const vec3_t dir ) {
 /*
 * CG_LasertGunImpact
 */
-void CG_LaserGunImpact( const vec3_t pos, const vec3_t dir, float radius, const vec3_t laser_dir, const vec4_t color ) {
+void CG_LaserGunImpact( const vec3_t pos, float radius, const vec3_t laser_dir, const vec4_t color ) {
 	entity_t ent;
 	vec3_t ndir;
 	vec3_t angles;
 
 	memset( &ent, 0, sizeof( ent ) );
 	VectorCopy( pos, ent.origin );
-	VectorMA( ent.origin, 2, dir, ent.origin );
 	ent.renderfx = RF_FULLBRIGHT | RF_NOSHADOW;
 	ent.scale = 1.45f;
 	Vector4Set( ent.shaderRGBA, color[0] * 255, color[1] * 255, color[2] * 255, color[3] * 255 );
-	ent.model = CG_MediaModel( cgs.media.modLasergunWallExplo );
+	ent.model = cgs.media.modLasergunWallExplo;
 	VectorNegate( laser_dir, ndir );
 	VecToAngles( ndir, angles );
 	angles[2] = anglemod( -360.0f * cg.time * 0.001f );
@@ -727,14 +733,16 @@ void CG_GunBladeBlastImpact( const vec3_t pos, const vec3_t dir, float radius ) 
 	lentity_t *le;
 	lentity_t *le_explo;
 	vec3_t angles;
+	vec3_t origin;
 	float model_radius = GUNBLADEBLAST_EXPLOSION_MODEL_RADIUS;
 
 	VecToAngles( dir, angles );
+	VectorMA( pos, IMPACT_POINT_OFFSET, dir, origin );
 
 	le = CG_AllocModel( LE_ALPHA_FADE, pos, angles, 2, //3 frames
 						1, 1, 1, 1, //full white no inducted alpha
 						0, 0, 0, 0, //dlight
-						CG_MediaModel( cgs.media.modBladeWallHit ),
+						cgs.media.modBladeWallHit,
 
 	                    //"models/weapon_hits/gunblade/hit_blast.md3"
 						NULL );
@@ -742,15 +750,15 @@ void CG_GunBladeBlastImpact( const vec3_t pos, const vec3_t dir, float radius ) 
 	le->ent.scale = 1.0f; // this is the small bullet impact
 
 
-	le_explo = CG_AllocModel( LE_ALPHA_FADE, pos, angles, 2 + ( radius / 16.1f ),
+	le_explo = CG_AllocModel( LE_ALPHA_FADE, origin, angles, 2 + ( radius / 16.1f ),
 							  1, 1, 1, 1, //full white no inducted alpha
 							  0, 0, 0, 0, //dlight
-							  CG_MediaModel( cgs.media.modBladeWallExplo ),
+							  cgs.media.modBladeWallExplo,
 							  NULL );
 	le_explo->ent.rotation = rand() % 360;
 	le_explo->ent.scale = radius / model_radius;
 
-	CG_SpawnDecal( pos, dir, random() * 360, 3 + ( radius * 0.5f ), 1, 1, 1, 1, 10, 1, false, CG_MediaShader( cgs.media.shaderExplosionMark ) );
+	CG_SpawnDecal( pos, dir, random() * 360, 3 + ( radius * 0.5f ), 1, 1, 1, 1, 10, 1, false, cgs.media.shaderExplosionMark );
 }
 
 static void CG_ProjectileFireTrail( centity_t *cent ) {
@@ -773,9 +781,9 @@ static void CG_ProjectileFireTrail( centity_t *cent ) {
 	}
 
 	if( cent->effects & EF_STRONG_WEAPON ) {
-		shader = CG_MediaShader( cgs.media.shaderStrongRocketFireTrailPuff );
+		shader = cgs.media.shaderStrongRocketFireTrailPuff;
 	} else {
-		shader = CG_MediaShader( cgs.media.shaderWeakRocketFireTrailPuff );
+		shader = cgs.media.shaderWeakRocketFireTrailPuff;
 	}
 
 	// density is found by quantity per second
@@ -789,7 +797,7 @@ static void CG_ProjectileFireTrail( centity_t *cent ) {
 	if( cent->localEffects[LOCALEFFECT_ROCKETFIRE_LAST_DROP] + trailTime < cg.time ) {
 		cent->localEffects[LOCALEFFECT_ROCKETFIRE_LAST_DROP] = cg.time;
 
-		clamp( alpha, 0.0f, 1.0f );
+		Q_clamp( alpha, 0.0f, 1.0f );
 		le = CG_AllocSprite( LE_INVERSESCALE_ALPHA_FADE, cent->trailOrigin, radius, 4,
 							 1.0f, 1.0f, 1.0f, alpha,
 							 0, 0, 0, 0,
@@ -810,9 +818,9 @@ void CG_ProjectileTrail( centity_t *cent ) {
 	int trailTime;
 	float radius = 6.5f, alpha = 0.35f;
 #if 0
-	struct shader_s *shader = CG_MediaShader( cgs.media.shaderRocketTrailSmokePuff );
+	struct shader_s *shader = cgs.media.shaderRocketTrailSmokePuff;
 #else
-	struct shader_s *shader = CG_MediaShader( cgs.media.shaderSmokePuff );
+	struct shader_s *shader = cgs.media.shaderSmokePuff;
 #endif
 	CG_ProjectileFireTrail( cent ); // add fire trail
 
@@ -840,12 +848,12 @@ void CG_ProjectileTrail( centity_t *cent ) {
 
 		contents = ( CG_PointContents( cent->trailOrigin ) & CG_PointContents( cent->ent.origin ) );
 		if( contents & MASK_WATER ) {
-			shader = CG_MediaShader( cgs.media.shaderWaterBubble );
+			shader = cgs.media.shaderWaterBubble;
 			radius = 3 + crandom();
 			alpha = 1.0f;
 		}
 
-		clamp( alpha, 0.0f, 1.0f );
+		Q_clamp( alpha, 0.0f, 1.0f );
 		le = CG_AllocSprite( LE_PUFF_SHRINK, cent->trailOrigin, radius, 20,
 							 1.0f, 1.0f, 1.0f, alpha,
 							 0, 0, 0, 0,
@@ -865,7 +873,7 @@ void CG_NewBloodTrail( centity_t *cent ) {
 	int contents;
 	int trailTime;
 	float radius = 2.5f, alpha = cg_bloodTrailAlpha->value;
-	struct shader_s *shader = CG_MediaShader( cgs.media.shaderBloodTrailPuff );
+	struct shader_s *shader = cgs.media.shaderBloodTrailPuff;
 
 	if( !cg_showBloodTrail->integer ) {
 		return;
@@ -895,12 +903,12 @@ void CG_NewBloodTrail( centity_t *cent ) {
 
 		contents = ( CG_PointContents( cent->trailOrigin ) & CG_PointContents( cent->ent.origin ) );
 		if( contents & MASK_WATER ) {
-			shader = CG_MediaShader( cgs.media.shaderBloodTrailLiquidPuff );
+			shader = cgs.media.shaderBloodTrailLiquidPuff;
 			radius = 4 + crandom();
 			alpha = 0.5f * cg_bloodTrailAlpha->value;
 		}
 
-		clamp( alpha, 0.0f, 1.0f );
+		Q_clamp( alpha, 0.0f, 1.0f );
 		le = CG_AllocSprite( LE_SCALE_ALPHA_FADE, cent->trailOrigin, radius, 8,
 							 1.0f, 1.0f, 1.0f, alpha,
 							 0, 0, 0, 0,
@@ -918,7 +926,7 @@ void CG_BloodDamageEffect( const vec3_t origin, const vec3_t dir, int damage ) {
 	int count, i;
 	float radius = 5.0f, alpha = cg_bloodTrailAlpha->value;
 	int time = 8;
-	struct shader_s *shader = CG_MediaShader( cgs.media.shaderBloodImpactPuff );
+	struct shader_s *shader = cgs.media.shaderBloodImpactPuff;
 	vec3_t local_dir;
 
 	if( !cg_showBloodTrail->integer ) {
@@ -930,10 +938,10 @@ void CG_BloodDamageEffect( const vec3_t origin, const vec3_t dir, int damage ) {
 	}
 
 	count = (int)( damage * 0.25f );
-	clamp( count, 1, 10 );
+	Q_clamp( count, 1, 10 );
 
 	if( CG_PointContents( origin ) & MASK_WATER ) {
-		shader = CG_MediaShader( cgs.media.shaderBloodTrailLiquidPuff );
+		shader = cgs.media.shaderBloodTrailLiquidPuff;
 		radius += ( 1 + crandom() );
 		alpha = 0.5f * cg_bloodTrailAlpha->value;
 	}
@@ -955,63 +963,8 @@ void CG_BloodDamageEffect( const vec3_t origin, const vec3_t dir, int damage ) {
 				   -local_dir[0] * 5 + crandom() * 5,
 				   -local_dir[1] * 5 + crandom() * 5,
 				   -local_dir[2] * 5 + crandom() * 5 + 3 );
-		VectorMA( local_dir, min( 6, count ), le->velocity, le->velocity );
+		VectorMA( local_dir, fmin( 6, count ), le->velocity, le->velocity );
 	}
-}
-
-/*
-* CG_CartoonHitEffect
-*/
-void CG_CartoonHitEffect( const vec3_t origin, const vec3_t dir, int damage ) {
-	lentity_t *le;
-	int time = 6;
-	float radius = 11.0f, alpha = cg_bloodTrailAlpha->value;
-	struct shader_s *shader = CG_MediaShader( cgs.media.shaderCartoonHit );
-	struct shader_s *shader2 = CG_MediaShader( cgs.media.shaderCartoonHit2 );
-	struct shader_s *shader3 = CG_MediaShader( cgs.media.shaderCartoonHit3 );
-	vec3_t local_origin, local_dir;
-
-	if( !cg_cartoonHitEffect->integer ) {
-		return;
-	}
-
-	if( damage < 39 ) {
-		return;
-	}
-
-	if( !VectorLength( dir ) ) {
-		VectorNegate( &cg.view.axis[AXIS_FORWARD], local_dir );
-	} else {
-		VectorNormalize2( dir, local_dir );
-	}
-
-	// Move effect a bit up from player
-	VectorCopy( origin, local_origin );
-	local_origin[2] += 65;
-
-	// small buff
-	if( damage < 64 ) {
-		if( damage < 50 ) {
-			// SPLITZOW!
-			radius = 7.0f;
-			le = CG_AllocSprite( LE_SCALE_ALPHA_FADE, local_origin, radius, time, 1, 1, 1, alpha, 0, 0, 0, 0, shader2 );
-		} else {
-			// POW!
-			radius = 9.0f;
-			le = CG_AllocSprite( LE_SCALE_ALPHA_FADE, local_origin, radius, time, 1, 1, 1, alpha, 0, 0, 0, 0, shader );
-		}
-	} else {
-		// big buff
-		// OUCH!
-		le = CG_AllocSprite( LE_SCALE_ALPHA_FADE, local_origin, radius, time, 1, 1, 1, alpha, 0, 0, 0, 0, shader3 );
-	}
-
-	// randomize dir
-	VectorSet( le->velocity,
-			   -local_dir[0] * 5 + crandom() * 5,
-			   -local_dir[1] * 5 + crandom() * 5,
-			   -local_dir[2] * 5 + crandom() * 5 + 3 );
-	VectorMA( local_dir, 1, le->velocity, le->velocity );
 }
 
 /*
@@ -1049,7 +1002,7 @@ void CG_PModel_SpawnTeleportEffect( centity_t *cent ) {
 			// spawn a dummy model
 			le = CG_AllocModel( LE_RGB_FADE, teleportOrigin, vec3_origin, 10,
 								rgb[0], rgb[1], rgb[2], 1, 0, 0, 0, 0, cent->ent.model,
-								CG_MediaShader( cgs.media.shaderTeleportShellGfx ) );
+								cgs.media.shaderTeleportShellGfx );
 
 			if( cent->skel ) {
 				// use static bone pose, no animation
@@ -1085,9 +1038,9 @@ void CG_GrenadeExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode,
 	//jalfixme: (shouldn't we do the water sound variation?)
 
 	if( fire_mode == FIRE_MODE_STRONG ) {
-		CG_SpawnDecal( pos, decaldir, random() * 360, radius * 0.5, 1, 1, 1, 1, 10, 1, false, CG_MediaShader( cgs.media.shaderExplosionMark ) );
+		CG_SpawnDecal( pos, decaldir, random() * 360, radius * 0.5, 1, 1, 1, 1, 10, 1, false, cgs.media.shaderExplosionMark );
 	} else {
-		CG_SpawnDecal( pos, decaldir, random() * 360, radius * 0.25, 1, 1, 1, 1, 10, 1, false, CG_MediaShader( cgs.media.shaderExplosionMark ) );
+		CG_SpawnDecal( pos, decaldir, random() * 360, radius * 0.25, 1, 1, 1, 1, 10, 1, false, cgs.media.shaderExplosionMark );
 	}
 
 	// animmap shader of the explosion
@@ -1095,7 +1048,7 @@ void CG_GrenadeExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode,
 	le = CG_AllocSprite( LE_ALPHA_FADE, origin, radius * 0.5f, 8,
 						 1, 1, 1, 1,
 						 radius * 4, 0.75f, 0.533f, 0, // yellow dlight
-						 CG_MediaShader( cgs.media.shaderRocketExplosion ) );
+						 cgs.media.shaderRocketExplosion );
 
 	VectorSet( vec, crandom() * expvelocity, crandom() * expvelocity, crandom() * expvelocity );
 	VectorScale( dir, expvelocity, le->velocity );
@@ -1108,7 +1061,7 @@ void CG_GrenadeExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode,
 		le = CG_AllocSprite( LE_ALPHA_FADE, origin, radius, 3,
 							 1, 1, 1, 1,
 							 0, 0, 0, 0, // no dlight
-							 CG_MediaShader( cgs.media.shaderRocketExplosionRing ) );
+							 cgs.media.shaderRocketExplosionRing );
 
 		le->ent.rotation = rand() % 360;
 	}
@@ -1122,9 +1075,9 @@ void CG_GrenadeExplosionMode( const vec3_t pos, const vec3_t dir, int fire_mode,
 	CG_ParticleExplosionEffect( pos, dir, 1, 0.5, 0, 32 );
 
 	if( fire_mode == FIRE_MODE_STRONG ) {
-		trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxGrenadeStrongExplosion ), pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
+		trap_S_StartFixedSound( cgs.media.sfxGrenadeStrongExplosion, pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
 	} else {
-		trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxGrenadeWeakExplosion ), pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
+		trap_S_StartFixedSound( cgs.media.sfxGrenadeWeakExplosion, pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
 	}
 }
 
@@ -1145,9 +1098,9 @@ void CG_GenericExplosion( const vec3_t pos, const vec3_t dir, int fire_mode, flo
 	//jalfixme: (shouldn't we do the water sound variation?)
 
 	if( fire_mode == FIRE_MODE_STRONG ) {
-		CG_SpawnDecal( pos, decaldir, random() * 360, radius * 0.5, 1, 1, 1, 1, 10, 1, false, CG_MediaShader( cgs.media.shaderExplosionMark ) );
+		CG_SpawnDecal( pos, decaldir, random() * 360, radius * 0.5, 1, 1, 1, 1, 10, 1, false, cgs.media.shaderExplosionMark );
 	} else {
-		CG_SpawnDecal( pos, decaldir, random() * 360, radius * 0.25, 1, 1, 1, 1, 10, 1, false, CG_MediaShader( cgs.media.shaderExplosionMark ) );
+		CG_SpawnDecal( pos, decaldir, random() * 360, radius * 0.25, 1, 1, 1, 1, 10, 1, false, cgs.media.shaderExplosionMark );
 	}
 
 	// animmap shader of the explosion
@@ -1155,7 +1108,7 @@ void CG_GenericExplosion( const vec3_t pos, const vec3_t dir, int fire_mode, flo
 	le = CG_AllocSprite( LE_ALPHA_FADE, origin, radius * 0.5f, 8,
 						 1, 1, 1, 1,
 						 radius * 4, 0.75f, 0.533f, 0, // yellow dlight
-						 CG_MediaShader( cgs.media.shaderRocketExplosion ) );
+						 cgs.media.shaderRocketExplosion );
 
 	VectorSet( vec, crandom() * expvelocity, crandom() * expvelocity, crandom() * expvelocity );
 	VectorScale( dir, expvelocity, le->velocity );
@@ -1164,9 +1117,9 @@ void CG_GenericExplosion( const vec3_t pos, const vec3_t dir, int fire_mode, flo
 
 	// use the rocket explosion sounds
 	if( fire_mode == FIRE_MODE_STRONG ) {
-		trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxRocketLauncherStrongHit ), pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
+		trap_S_StartFixedSound( cgs.media.sfxRocketLauncherStrongHit, pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
 	} else {
-		trap_S_StartFixedSound( CG_MediaSfx( cgs.media.sfxRocketLauncherWeakHit ), pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
+		trap_S_StartFixedSound( cgs.media.sfxRocketLauncherWeakHit, pos, CHAN_AUTO, cg_volume_effects->value, ATTN_DISTANT );
 	}
 }
 
@@ -1187,7 +1140,7 @@ void CG_FlagTrail( const vec3_t origin, const vec3_t start, const vec3_t end, fl
 	le = CG_AllocSprite( LE_SCALE_ALPHA_FADE, origin, 8, 50 + 50 * random(),
 						 r, g, b, 0.7f,
 						 0, 0, 0, 0,
-						 CG_MediaShader( cgs.media.shaderTeleporterSmokePuff ) );
+						 cgs.media.shaderTeleporterSmokePuff );
 	VectorSet( le->velocity, -dir[0] * 5 + crandom() * 5, -dir[1] * 5 + crandom() * 5, -dir[2] * 5 + crandom() * 5 + 3 );
 	le->ent.rotation = rand() % 360;
 
@@ -1214,7 +1167,7 @@ void CG_Explosion2( const vec3_t pos ) {
 * CG_GreenLaser
 */
 void CG_GreenLaser( const vec3_t start, const vec3_t end ) {
-	CG_AllocLaser( start, end, 2.0f, 2.0f, 0.0f, 0.85f, 0.0f, 0.3f, CG_MediaShader( cgs.media.shaderLaser ) );
+	CG_AllocLaser( start, end, 2.0f, 2.0f, 0.0f, 0.85f, 0.0f, 0.3f, cgs.media.shaderLaser );
 }
 
 void CG_SpawnTracer( const vec3_t origin, const vec3_t dir, const vec3_t dir_per1, const vec3_t dir_per2 ) {
@@ -1227,7 +1180,7 @@ void CG_SpawnTracer( const vec3_t origin, const vec3_t dir, const vec3_t dir_per
 	VectorScale( dir_temp, VectorNormalize( dir_temp ), dir_temp );
 	VectorScale( dir_temp, random() * 400 + 420, dir_temp );
 
-	tracer = CG_AllocSprite( LE_EXPLOSION_TRACER, origin, 30, 7, 1, 1, 1, 1, 0, 0, 0, 0, CG_MediaShader( cgs.media.shaderSmokePuff3 ) );
+	tracer = CG_AllocSprite( LE_EXPLOSION_TRACER, origin, 30, 7, 1, 1, 1, 1, 0, 0, 0, 0, cgs.media.shaderSmokePuff3 );
 	VectorCopy( dir_temp, tracer->velocity );
 	VectorSet( tracer->accel, -0.2f, -0.2f, -9.8f * 170 );
 	tracer->bounce = 50;
@@ -1265,7 +1218,7 @@ void CG_Dash( const entity_state_t *state ) {
 	le = CG_AllocModel( LE_DASH_SCALE, pos, angle, 7, //5
 						1.0, 1.0, 1.0, 0.2f,
 						0, 0, 0, 0,
-						CG_MediaModel( cgs.media.modDash ),
+						cgs.media.modDash,
 						NULL
 						);
 	le->ent.scale = 0.01f;
@@ -1274,18 +1227,18 @@ void CG_Dash( const entity_state_t *state ) {
 
 void CG_Explosion_Puff( const vec3_t pos, float radius, int frame ) {
 	lentity_t *le;
-	struct shader_s *shader = CG_MediaShader( cgs.media.shaderSmokePuff1 );
+	struct shader_s *shader = cgs.media.shaderSmokePuff1;
 	vec3_t local_pos;
 
 	switch( (int)floor( crandom() * 3.0f ) ) {
 		case 0:
-			shader = CG_MediaShader( cgs.media.shaderSmokePuff1 );
+			shader = cgs.media.shaderSmokePuff1;
 			break;
 		case 1:
-			shader = CG_MediaShader( cgs.media.shaderSmokePuff2 );
+			shader = cgs.media.shaderSmokePuff2;
 			break;
 		case 2:
-			shader = CG_MediaShader( cgs.media.shaderSmokePuff3 );
+			shader = cgs.media.shaderSmokePuff3;
 			break;
 	}
 
@@ -1304,21 +1257,8 @@ void CG_Explosion_Puff( const vec3_t pos, float radius, int frame ) {
 void CG_Explosion_Puff_2( const vec3_t pos, const vec3_t vel, int radius ) {
 
 	lentity_t *le;
-	struct shader_s *shader = CG_MediaShader( cgs.media.shaderSmokePuff3 );
-	/*
-	switch( (int)floor( crandom()*3.0f ) )
-	{
-	case 0:
-	shader = CG_MediaShader( cgs.media.shaderSmokePuff1 );
-	break;
-	case 1:
-	shader = CG_MediaShader( cgs.media.shaderSmokePuff2 );
-	break;
-	case 2:
-	shader = CG_MediaShader( cgs.media.shaderSmokePuff3 );
-	break;
-	}
-	*/
+	struct shader_s *shader = cgs.media.shaderSmokePuff3;
+
 	if( radius == 0 ) {
 		radius = (int)floor( 35.0f + crandom() * 5 );
 	}
@@ -1328,8 +1268,6 @@ void CG_Explosion_Puff_2( const vec3_t pos, const vec3_t vel, int radius ) {
 						 0, 0, 0, 0,
 						 shader );
 	VectorCopy( vel, le->velocity );
-
-	//le->ent.rotation = rand () % 360;
 }
 
 void CG_DustCircle( const vec3_t pos, const vec3_t dir, float radius, int count ) {
@@ -1364,7 +1302,7 @@ void CG_DustCircle( const vec3_t pos, const vec3_t dir, float radius, int count 
 void CG_ExplosionsDust( const vec3_t pos, const vec3_t dir, float radius ) {
 	const int count = 32; /* Number of sprites used to create the circle */
 	lentity_t *le;
-	struct shader_s *shader = CG_MediaShader( cgs.media.shaderSmokePuff3 );
+	struct shader_s *shader = cgs.media.shaderSmokePuff3;
 
 	vec3_t dir_per1;
 	vec3_t dir_per2;
@@ -1413,7 +1351,7 @@ void CG_SmallPileOfGibs( const vec3_t origin, int damage, const vec3_t initialVe
 
 	time = 50;
 	count = 14 + cg_gibs->integer; // 15 models minimum
-	clamp( count, 15, 128 );
+	Q_clamp( count, 15, 128 );
 
 	for( i = 0; i < count; i++ ) {
 		vec4_t color;
@@ -1436,7 +1374,7 @@ void CG_SmallPileOfGibs( const vec3_t origin, int damage, const vec3_t initialVe
 					// team
 					CG_TeamColor( team, color );
 					for( j = 0; j < 3; j++ ) {
-						color[j] = bound( 60.0f / 255.0f, color[j], 1.0f );
+						color[j] = Q_bound( 60.0f / 255.0f, color[j], 1.0f );
 					}
 				} else {
 					// grey
@@ -1448,7 +1386,7 @@ void CG_SmallPileOfGibs( const vec3_t origin, int damage, const vec3_t initialVe
 		le = CG_AllocModel( LE_ALPHA_FADE, origin, vec3_origin, time + time * random(),
 							color[0], color[1], color[2], color[3],
 							0, 0, 0, 0,
-							CG_MediaModel( cgs.media.modIlluminatiGibs ),
+							cgs.media.modIlluminatiGibs,
 							NULL );
 
 		// random rotation and scale variations
@@ -1461,11 +1399,11 @@ void CG_SmallPileOfGibs( const vec3_t origin, int damage, const vec3_t initialVe
 		velocity[1] = crandom() * 0.5;
 		velocity[2] = 0.5 + random() * 0.5; // always have upwards
 		VectorNormalize( velocity );
-		VectorScale( velocity, min( damage * 10, 300 ), velocity );
+		VectorScale( velocity, fmin( damage * 10, 300 ), velocity );
 
-		velocity[0] += crandom() * bound( 0, damage, 150 );
-		velocity[1] += crandom() * bound( 0, damage, 150 );
-		velocity[2] += random() * bound( 0, damage, 250 );
+		velocity[0] += crandom() * Q_bound( 0, damage, 150 );
+		velocity[1] += crandom() * Q_bound( 0, damage, 150 );
+		velocity[2] += random() * Q_bound( 0, damage, 250 );
 
 		VectorAdd( initialVelocity, velocity, le->velocity );
 
@@ -1512,13 +1450,13 @@ void CG_AddLocalEntities( void ) {
 
 		if( le->frames > 1 ) {
 			scale = 1.0f - frac / ( le->frames - 1 );
-			scale = bound( 0.0f, scale, 1.0f );
+			scale = Q_bound( 0.0f, scale, 1.0f );
 			fade = scale * 255.0f;
 
 			// quick fade in, if time enough
 			if( le->frames > FADEINFRAMES * 2 ) {
 				scaleIn = frac / (float)FADEINFRAMES;
-				clamp( scaleIn, 0.0f, 1.0f );
+				Q_clamp( scaleIn, 0.0f, 1.0f );
 				fadeIn = scaleIn * 255.0f;
 			} else {
 				fadeIn = 255.0f;
@@ -1584,25 +1522,25 @@ void CG_AddLocalEntities( void ) {
 			case LE_NO_FADE:
 				break;
 			case LE_RGB_FADE:
-				fade = min( fade, fadeIn );
+				fade = fminf( fade, fadeIn );
 				ent->shaderRGBA[0] = ( uint8_t )( fade * le->color[0] );
 				ent->shaderRGBA[1] = ( uint8_t )( fade * le->color[1] );
 				ent->shaderRGBA[2] = ( uint8_t )( fade * le->color[2] );
 				break;
 			case LE_SCALE_ALPHA_FADE:
-				fade = min( fade, fadeIn );
+				fade = fminf( fade, fadeIn );
 				ent->scale = 1.0f + 1.0f / scale;
-				ent->scale = min( ent->scale, 5.0f );
+				ent->scale = fminf( ent->scale, 5.0f );
 				ent->shaderRGBA[3] = ( uint8_t )( fade * le->color[3] );
 				break;
 			case LE_INVERSESCALE_ALPHA_FADE:
-				fade = min( fade, fadeIn );
+				fade = fminf( fade, fadeIn );
 				ent->scale = scale + 0.1f;
-				clamp( ent->scale, 0.1f, 1.0f );
+				Q_clamp( ent->scale, 0.1f, 1.0f );
 				ent->shaderRGBA[3] = ( uint8_t )( fade * le->color[3] );
 				break;
 			case LE_ALPHA_FADE:
-				fade = min( fade, fadeIn );
+				fade = fminf( fade, fadeIn );
 				ent->shaderRGBA[3] = ( uint8_t )( fade * le->color[3] );
 				break;
 			default:

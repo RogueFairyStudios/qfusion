@@ -21,7 +21,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef __UI_PUBLIC_H__
 #define __UI_PUBLIC_H__
 
-#define UI_API_VERSION      66
+#define UI_API_VERSION      67
 
 typedef size_t ( *ui_async_stream_read_cb_t )( const void *buf, size_t numb, float percentage,
 											 int status, const char *contentType, void *privatep );
@@ -30,7 +30,7 @@ typedef void ( *ui_async_stream_done_cb_t )( int status, const char *contentType
 typedef void ( *ui_fdrawchar_t )( int x, int y, int w, int h, float s1, float t1, float s2, float t2, const vec4_t color, const struct shader_s *shader );
 
 enum {
-	UI_CONTEXT_QUICK,
+	UI_CONTEXT_OVERLAY,
 	UI_CONTEXT_MAIN,
 
 	UI_NUM_CONTEXTS
@@ -97,11 +97,19 @@ typedef struct {
 	void ( *R_GetScissor )( int *x, int *y, int *w, int *h );
 	void ( *R_ResetScissor )( void );
 	void ( *R_GetShaderDimensions )( const struct shader_s *shader, int *width, int *height );
-	void ( *R_TransformVectorToScreen )( const refdef_t *rd, vec3_t const in, vec2_t out );
+	void ( *R_TransformVectorToScreen )( const refdef_t *rd, vec3_t const in, vec3_t out );
 	int ( *R_SkeletalGetNumBones )( const struct model_s *mod, int *numFrames );
 	int ( *R_SkeletalGetBoneInfo )( const struct model_s *mod, int bone, char *name, size_t name_size, int *flags );
 	void ( *R_SkeletalGetBonePose )( const struct model_s *mod, int bone, int frame, bonepose_t *bonepose );
 	struct cinematics_s *( *R_GetShaderCinematic )( struct shader_s *shader );
+
+	/**
+	* SetTransformMatrix
+	*
+	* Called by UI when it wants to set the current transform matrix to a new matrix.
+	* Passing a NULL pointer will set the transform maix to identity.
+	*/
+	void ( *R_SetTransformMatrix )( const float *m );
 
 	struct sfx_s *( *S_RegisterSound )( const char *name );
 	void ( *S_StartLocalSound )( struct sfx_s *sfx, int channel, float fvol );
@@ -225,20 +233,25 @@ typedef struct {
 								   int downloadType, const char *downloadfilename, float downloadPercent, int downloadSpeed,
 								   int connectCount, bool backGround );
 
-	void ( *Keydown )( int context, int key );
-	void ( *Keyup )( int context, int key );
+	void ( *KeyEvent )( int context, int key, bool down );
 	void ( *CharEvent )( int context, wchar_t key );
 
 	void ( *MouseMove )( int context, int frameTime, int dx, int dy );
 	void ( *MouseSet )( int context, int mx, int my, bool showCursor );
+
+	/**
+	* MouseHover
+	* Returns true if mouse hovers above something that's isn't the body element.
+	*/
+	bool ( *MouseHover )( int context );
 
 	bool ( *TouchEvent )( int context, int id, touchevent_t type, int x, int y );
 	bool ( *IsTouchDown )( int context, int id );
 	void ( *CancelTouches )( int context );
 
 	void ( *ForceMenuOff )( void );
-	bool ( *HaveQuickMenu )( void );
-	void ( *ShowQuickMenu )( bool show );
+	bool ( *HaveOverlayMenu )( void );
+	void ( *ShowOverlayMenu )( bool show, bool showCursor );
 	void ( *AddToServerList )( const char *adr, const char *info );
 } ui_export_t;
 

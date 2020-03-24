@@ -105,6 +105,7 @@ typedef struct {
 	struct cmodel_s *( *CM_InlineModel )( int num );
 	int ( *CM_TransformedPointContents )( vec3_t p, struct cmodel_s *cmodel, vec3_t origin, vec3_t angles );
 	void ( *CM_TransformedBoxTrace )( trace_t *tr, vec3_t start, vec3_t end, vec3_t mins, vec3_t maxs, struct cmodel_s *cmodel, int brushmask, vec3_t origin, vec3_t angles );
+	void ( *CM_RoundUpToHullSize )( vec3_t mins, vec3_t maxs, struct cmodel_s *cmodel );
 	void ( *CM_InlineModelBounds )( struct cmodel_s *cmodel, vec3_t mins, vec3_t maxs );
 	struct cmodel_s *( *CM_ModelForBBox )( vec3_t mins, vec3_t maxs );
 	struct cmodel_s *( *CM_OctagonModelForBBox )( vec3_t mins, vec3_t maxs );
@@ -204,10 +205,9 @@ typedef struct {
 	// each new level entered will cause a call to SpawnEntities
 	void ( *InitLevel )( char *mapname, char *entities, int entstrlen, int64_t levelTime, int64_t serverTime, int64_t realTime );
 
-	bool ( *ClientConnect )( edict_t *ent, char *userinfo, bool fakeClient, bool tvClient );
+	bool ( *ClientConnect )( edict_t *ent, char *userinfo, bool fakeClient );
 	void ( *ClientBegin )( edict_t *ent );
 	void ( *ClientUserinfoChanged )( edict_t *ent, char *userinfo );
-	bool ( *ClientMultiviewChanged )( edict_t *ent, bool multiview );
 	void ( *ClientDisconnect )( edict_t *ent, const char *reason );
 	void ( *ClientCommand )( edict_t *ent );
 	void ( *ClientThink )( edict_t *ent, usercmd_t *cmd, int timeDelta );

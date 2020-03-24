@@ -45,19 +45,6 @@ cvar_t *cl_demoavi_audio;
 cvar_t *cl_demoavi_fps;
 cvar_t *cl_demoavi_scissor;
 
-cvar_t *sensitivity;
-cvar_t *zoomsens;
-cvar_t *m_accel;
-cvar_t *m_accelStyle;
-cvar_t *m_accelOffset;
-cvar_t *m_accelPow;
-cvar_t *m_filter;
-cvar_t *m_filterStrength;
-cvar_t *m_sensCap;
-
-cvar_t *m_pitch;
-cvar_t *m_yaw;
-
 //
 // userinfo
 //
@@ -139,16 +126,11 @@ void CL_UpdateClientCommandsToServer( msg_t *msg ) {
 		}
 
 		MSG_WriteUint8( msg, clc_clientcommand );
-		if( !cls.reliable ) {
-			MSG_WriteIntBase128( msg, i );
-		}
+		MSG_WriteIntBase128( msg, i );
 		MSG_WriteString( msg, cls.reliableCommands[i & ( MAX_RELIABLE_COMMANDS - 1 )] );
 	}
 
 	cls.reliableSent = cls.reliableSequence;
-	if( cls.reliable ) {
-		cls.reliableAcknowledge = cls.reliableSent;
-	}
 }
 
 /*
@@ -259,7 +241,7 @@ static void CL_CheckForResend( void ) {
 	}
 
 	// resend if we haven't gotten a reply yet
-	if( cls.state == CA_CONNECTING && !cls.reliable ) {
+	if( cls.state == CA_CONNECTING ) {
 		if( realtime - cls.connect_time < 3000 ) {
 			return;
 		}
@@ -273,50 +255,6 @@ static void CL_CheckForResend( void ) {
 		Com_Printf( "Connecting to %s...\n", cls.servername );
 
 		Netchan_OutOfBandPrint( cls.socket, &cls.serveraddress, "getchallenge\n" );
-	}
-
-	if( cls.state == CA_CONNECTING && cls.reliable ) {
-		if( realtime - cls.connect_time < 3000 ) {
-			return;
-		}
-
-#ifdef TCP_ALLOW_CONNECT
-		if( cls.socket->type == SOCKET_TCP && !cls.socket->connected ) {
-			connection_status_t status;
-
-			if( !cls.connect_count ) {
-				Com_Printf( "Connecting to %s...\n", cls.servername );
-
-				status = NET_Connect( cls.socket, &cls.serveraddress );
-			} else {
-				Com_Printf( "Checking connection to %s...\n", cls.servername );
-
-				status = NET_CheckConnect( cls.socket );
-			}
-
-			cls.connect_count++;
-			cls.connect_time = realtime;
-
-			if( status == CONNECTION_FAILED ) {
-				CL_Disconnect( va( "TCP connection failed: %s", NET_ErrorString() ) );
-				return;
-			}
-
-			if( status == CONNECTION_INPROGRESS ) {
-				return;
-			}
-
-			Com_Printf( "Connection made, asking for challenge %s...\n", cls.servername );
-			Netchan_OutOfBandPrint( cls.socket, &cls.serveraddress, "getchallenge\n" );
-			return;
-		}
-#endif
-
-		if( realtime - cls.connect_time < 10000 ) {
-			return;
-		}
-
-		CL_Disconnect( "Connection timed out" );
 	}
 }
 
@@ -340,26 +278,11 @@ static void CL_Connect( const char *servername, socket_type_t type, netadr_t *ad
 				return;
 			}
 			cls.socket = &cls.socket_loopback;
-			cls.reliable = false;
 			break;
 
 		case SOCKET_UDP:
 			cls.socket = ( address->type == NA_IP6 ?  &cls.socket_udp6 :  &cls.socket_udp );
-			cls.reliable = false;
 			break;
-
-#ifdef TCP_ALLOW_CONNECT
-		case SOCKET_TCP:
-			NET_InitAddress( &socketaddress, address->type );
-			if( !NET_OpenSocket( &cls.socket_tcp, SOCKET_TCP, &socketaddress, false ) ) {
-				Com_Error( ERR_FATAL, "Couldn't open the TCP socket\n" ); // FIXME
-				return;
-			}
-			NET_SetSocketNoDelay( &cls.socket_tcp, 1 );
-			cls.socket = &cls.socket_tcp;
-			cls.reliable = true;
-			break;
-#endif
 
 		default:
 			assert( false );
@@ -397,7 +320,6 @@ static void CL_Connect( const char *servername, socket_type_t type, netadr_t *ad
 	cls.connect_count = 0;
 	cls.rejected = false;
 	cls.lastPacketReceivedTime = cls.realtime; // reset the timeout limit
-	cls.mv = false;
 }
 
 /*
@@ -488,16 +410,6 @@ static void CL_Connect_Cmd_f( socket_type_t socket ) {
 static void CL_Connect_f( void ) {
 	CL_Connect_Cmd_f( SOCKET_UDP );
 }
-
-/*
-* CL_TCPConnect_f
-*/
-#if defined( TCP_ALLOW_CONNECT )
-static void CL_TCPConnect_f( void ) {
-	CL_Connect_Cmd_f( SOCKET_TCP );
-}
-#endif
-
 
 /*
 * CL_Rcon_f
@@ -687,8 +599,6 @@ static void CL_EndRegistration( void ) {
 
 	cls.registrationOpen = false;
 
-	FTLIB_TouchAllFonts();
-	CL_UIModule_TouchAllAssets();
 	re.EndRegistration();
 	CL_SoundModule_EndRegistration();
 }
@@ -849,7 +759,7 @@ void CL_Disconnect( const char *message ) {
 		}
 
 		Com_Printf( "\n" );
-		if( time > 0 ) {
+		if( sumcounts > 0 ) {
 			float mean = 1000.0 / (double)sumcounts * cl.timedemo.frames;
 			int64_t duration = Sys_Milliseconds() - cl.timedemo.startTime;
 			Com_Printf( "%3.1f seconds: %3.1f mean fps\n", duration / 1000.0, mean );
@@ -884,8 +794,6 @@ void CL_Disconnect( const char *message ) {
 	}
 
 	cls.socket = NULL;
-	cls.reliable = false;
-	cls.mv = false;
 
 	if( cls.httpbaseurl ) {
 		Mem_Free( cls.httpbaseurl );
@@ -897,8 +805,6 @@ void CL_Disconnect( const char *message ) {
 	CL_EndRegistration();
 
 	CL_RestartMedia();
-
-	CL_Mumble_Unlink();
 
 	CL_ClearState();
 	CL_SetClientState( CA_DISCONNECTED );
@@ -1008,11 +914,7 @@ void CL_ServerReconnect_f( void ) {
 
 	Com_Printf( "Reconnecting...\n" );
 
-#ifdef TCP_ALLOW_CONNECT
-	cls.connect_time = Sys_Milliseconds();
-#else
 	cls.connect_time = Sys_Milliseconds() - 1500;
-#endif
 
 	memset( cl.configstrings, 0, sizeof( cl.configstrings ) );
 	CL_SetClientState( CA_HANDSHAKE );
@@ -1288,9 +1190,6 @@ void CL_ReadPackets( void ) {
 		&cls.socket_loopback,
 		&cls.socket_udp,
 		&cls.socket_udp6,
-#ifdef TCP_ALLOW_CONNECT
-		&cls.socket_tcp
-#endif
 	};
 
 	MSG_Init( &msg, msgData, sizeof( msgData ) );
@@ -1298,16 +1197,10 @@ void CL_ReadPackets( void ) {
 	for( socketind = 0; socketind < sizeof( sockets ) / sizeof( sockets[0] ); socketind++ ) {
 		socket = sockets[socketind];
 
-#ifdef TCP_ALLOW_CONNECT
-		if( socket->type == SOCKET_TCP && !socket->connected ) {
-			continue;
-		}
-#endif
-
 		while( socket->open && ( ret = NET_GetPacket( socket, &address, &msg ) ) != 0 ) {
 			if( ret == -1 ) {
 				Com_Printf( "Error receiving packet with %s: %s\n", NET_SocketToString( socket ), NET_ErrorString() );
-				if( cls.reliable && cls.socket == socket ) {
+				if( cls.socket == socket ) {
 					CL_Disconnect( va( "Error receiving packet: %s\n", NET_ErrorString() ) );
 				}
 
@@ -1351,13 +1244,6 @@ void CL_ReadPackets( void ) {
 			}
 			CL_ParseServerMessage( &msg );
 			cls.lastPacketReceivedTime = cls.realtime;
-
-#ifdef TCP_ALLOW_CONNECT
-			// we might have just been disconnected
-			if( socket->type == SOCKET_TCP && !socket->connected ) {
-				break;
-			}
-#endif
 		}
 	}
 
@@ -1568,19 +1454,20 @@ void CL_RequestNextDownload( void ) {
 
 	if( precache_check == ENV_CNT ) {
 		bool restart = false;
-		bool vid_restart = false;
+		bool full_restart = false;
 		const char *restart_msg = "";
 		unsigned map_checksum;
 
 		// we're done with the download phase, so clear the list
 		CL_FreeDownloadList();
+		restart_msg = "Pure server. Restarting media...";
 		if( cls.pure_restart ) {
 			restart = true;
 			restart_msg = "Pure server. Restarting media...";
 		}
 		if( cls.download.successCount ) {
 			restart = true;
-			vid_restart = true;
+			full_restart = true;
 			restart_msg = "Files downloaded. Restarting media...";
 		}
 
@@ -1589,9 +1476,19 @@ void CL_RequestNextDownload( void ) {
 		if( restart ) {
 			Com_Printf( "%s\n", restart_msg );
 
-			if( vid_restart ) {
+			if( full_restart ) {
 				// no media is going to survive a vid_restart...
-				Cbuf_ExecuteText( EXEC_NOW, "s_restart 1\n" );
+				CL_ShutdownMedia();
+				CL_EndRegistration();
+
+				FTLIB_UnloadLibrary( false );
+
+				FTLIB_LoadLibrary( false );
+
+				CL_BeginRegistration();
+				FTLIB_PrecacheFonts( false );
+
+				CL_InitMedia();
 			} else {
 				// make sure all media assets will be freed
 				CL_EndRegistration();
@@ -1599,7 +1496,7 @@ void CL_RequestNextDownload( void ) {
 			}
 		}
 
-		if( !vid_restart ) {
+		if( !full_restart ) {
 			CL_RestartMedia();
 		}
 
@@ -1628,8 +1525,6 @@ void CL_RequestNextDownload( void ) {
 	// load client game module
 	CL_GameModule_Init();
 	CL_AddReliableCommand( va( "begin %i\n", precache_spawncount ) );
-
-	CL_Mumble_Link();
 }
 
 /*
@@ -1771,9 +1666,7 @@ void CL_SetClientState( int state ) {
 			CL_UIModule_ForceMenuOff();
 			CL_SetKeyDest( key_game );
 			//SCR_UpdateScreen();
-			if( !cls.sv_tv ) {
-				CL_AddReliableCommand( "svmotd 1" );
-			}
+			CL_AddReliableCommand( "svmotd 1" );
 			CL_SoundModule_Clear();
 			break;
 		default:
@@ -1815,7 +1708,7 @@ void CL_InitMedia( void ) {
 	// register console font and background
 	SCR_RegisterConsoleMedia();
 
-	SCR_EnableQuickMenu( false );
+	SCR_ShowOverlay( false, true );
 
 	// load user interface
 	CL_UIModule_Init();
@@ -2045,9 +1938,6 @@ static void CL_InitLocal( void ) {
 	Cmd_AddCommand( "stop", CL_Stop_f );
 	Cmd_AddCommand( "quit", CL_Quit_f );
 	Cmd_AddCommand( "connect", CL_Connect_f );
-#if defined( TCP_ALLOW_CONNECT ) && defined( TCP_ALLOW_CONNECT_CLIENT )
-	Cmd_AddCommand( "tcpconnect", CL_TCPConnect_f );
-#endif
 	Cmd_AddCommand( "reconnect", CL_Reconnect_f );
 	Cmd_AddCommand( "rcon", CL_Rcon_f );
 	Cmd_AddCommand( "writeconfig", CL_WriteConfig_f );
@@ -2084,9 +1974,6 @@ static void CL_ShutdownLocal( void ) {
 	Cmd_RemoveCommand( "stop" );
 	Cmd_RemoveCommand( "quit" );
 	Cmd_RemoveCommand( "connect" );
-#if defined( TCP_ALLOW_CONNECT )
-	Cmd_RemoveCommand( "tcpconnect" );
-#endif
 	Cmd_RemoveCommand( "reconnect" );
 	Cmd_RemoveCommand( "rcon" );
 	Cmd_RemoveCommand( "writeconfig" );
@@ -2289,35 +2176,32 @@ static bool CL_MaxPacketsReached( void ) {
 	static float roundingMsec = 0.0f;
 	int minpackettime;
 	int elapsedTime;
+	float minTime;
 
 	if( lastPacketTime > cls.realtime ) {
 		lastPacketTime = cls.realtime;
 	}
 
-	if( cl_pps->integer > 62 || cl_pps->integer < 20 ) {
+	if( cl_pps->integer > 62 || cl_pps->integer < 40 ) {
 		Com_Printf( "'cl_pps' value is out of valid range, resetting to default\n" );
 		Cvar_ForceSet( "cl_pps", va( "%s", cl_pps->dvalue ) );
 	}
 
 	elapsedTime = cls.realtime - lastPacketTime;
-	if( cls.mv ) {
-		minpackettime = ( 1000.0f / 2 );
-	} else {
-		float minTime = ( 1000.0f / cl_pps->value );
+	minTime = ( 1000.0f / cl_pps->value );
 
-		// don't let cl_pps be smaller than sv_pps
-		if( cls.state == CA_ACTIVE && !cls.demo.playing && cl.snapFrameTime ) {
-			if( (unsigned int)minTime > cl.snapFrameTime ) {
-				minTime = cl.snapFrameTime;
-			}
+	// don't let cl_pps be smaller than sv_pps
+	if( cls.state == CA_ACTIVE && !cls.demo.playing && cl.snapFrameTime ) {
+		if( (unsigned int)minTime > cl.snapFrameTime ) {
+			minTime = cl.snapFrameTime;
 		}
+	}
 
-		minpackettime = (int)minTime;
-		roundingMsec += minTime - (int)minTime;
-		if( roundingMsec >= 1.0f ) {
-			minpackettime += (int)roundingMsec;
-			roundingMsec -= (int)roundingMsec;
-		}
+	minpackettime = (int)minTime;
+	roundingMsec += minTime - (int)minTime;
+	if( roundingMsec >= 1.0f ) {
+		minpackettime += (int)roundingMsec;
+		roundingMsec -= (int)roundingMsec;
 	}
 
 	if( elapsedTime < minpackettime ) {
@@ -2350,10 +2234,9 @@ void CL_SendMessagesToServer( bool sendNow ) {
 	if( cls.state < CA_ACTIVE ) {
 		if( sendNow || cls.realtime > 100 + cls.lastPacketSentTime ) {
 			// write the command ack
-			if( !cls.reliable ) {
-				MSG_WriteUint8( &message, clc_svcack );
-				MSG_WriteIntBase128( &message, cls.lastExecutedServerCommand );
-			}
+			MSG_WriteUint8( &message, clc_svcack );
+			MSG_WriteIntBase128( &message, cls.lastExecutedServerCommand );
+
 			//write up the clc commands
 			CL_UpdateClientCommandsToServer( &message );
 			if( message.cursize > 0 ) {
@@ -2362,10 +2245,9 @@ void CL_SendMessagesToServer( bool sendNow ) {
 		}
 	} else if( sendNow || CL_MaxPacketsReached() ) {
 		// write the command ack
-		if( !cls.reliable ) {
-			MSG_WriteUint8( &message, clc_svcack );
-			MSG_WriteIntBase128( &message, cls.lastExecutedServerCommand );
-		}
+		MSG_WriteUint8( &message, clc_svcack );
+		MSG_WriteIntBase128( &message, cls.lastExecutedServerCommand );
+
 		// send a userinfo update if needed
 		if( userinfo_modified ) {
 			userinfo_modified = false;
@@ -2415,6 +2297,7 @@ void CL_Frame( int realMsec, int gameMsec ) {
 	static float roundingMsec = 0.0f;
 	int minMsec;
 	float maxFps;
+	const int absMinFps = 24;
 
 	if( dedicated->integer ) {
 		return;
@@ -2491,12 +2374,12 @@ void CL_Frame( int realMsec, int gameMsec ) {
 		roundingMsec += 1000.0f / maxFps - minMsec;
 	} else if( cl_maxfps->integer > 0 && !(cl_timedemo->integer && cls.demo.playing)
 			   && !( cls.demo.avi_video && cls.state == CA_ACTIVE ) ) {
-		const int absMinFps = 24;
-
 		// do not allow setting cl_maxfps to very low values to prevent cheating
 		if( cl_maxfps->integer < absMinFps ) {
-			Cvar_ForceSet( "cl_maxfps", STR_TOSTR( absMinFps ) );
+			char buf[32];
+			Cvar_ForceSet( "cl_maxfps", va_r( buf, sizeof( buf ), "%d", absMinFps ) );
 		}
+
 		maxFps = VID_AppIsMinimized() ? absMinFps : cl_maxfps->value;
 		minMsec = max( ( 1000.0f / maxFps ), 1 );
 		roundingMsec += max( ( 1000.0f / maxFps ), 1.0f ) - minMsec;
@@ -2529,14 +2412,14 @@ void CL_Frame( int realMsec, int gameMsec ) {
 #if 1
 	if( allRealMsec < minMsec ) { // is compensating for a too slow frame
 		extraMsec -= ( minMsec - allRealMsec );
-		clamp( extraMsec, 0, 100 );
+		Q_clamp( extraMsec, 0, 100 );
 	} else {   // too slow, or exact frame
 		extraMsec = allRealMsec - minMsec;
-		clamp( extraMsec, 0, 100 );
+		Q_clamp( extraMsec, 0, 100 );
 	}
 #else
 	extraMsec = allRealMsec - minMsec;
-	clamp( extraMsec, 0, minMsec );
+	Q_clamp( extraMsec, 0, minMsec );
 #endif
 
 	CL_TimedemoStats();
@@ -2583,6 +2466,8 @@ void CL_Frame( int realMsec, int gameMsec ) {
 
 
 //============================================================================
+
+#ifdef PUBLIC_BUILD
 
 static char *updateRemoteData;
 static size_t updateRemoteDataSize;
@@ -2695,6 +2580,8 @@ static void CL_CheckForUpdateHeaderCb( const char *buf, void *privatep ) {
 		}
 	}
 }
+
+#endif
 
 /*
 * CL_CheckForUpdate
@@ -2940,8 +2827,6 @@ void CL_Init( void ) {
 	CL_MM_Init();
 
 	ML_Init();
-
-	CL_Mumble_Init();
 }
 
 /*
@@ -2976,7 +2861,6 @@ void CL_Shutdown( void ) {
 	CL_GameModule_Shutdown();
 	CL_SoundModule_Shutdown( true );
 	CL_ShutdownInput();
-	CL_Mumble_Shutdown();
 	L10n_Shutdown();
 	VID_Shutdown();
 

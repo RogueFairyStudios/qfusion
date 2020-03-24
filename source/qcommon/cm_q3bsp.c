@@ -272,18 +272,14 @@ static void CM_CreatePatch( cmodel_state_t *cms, cface_t *patch, cshaderref_t *s
 		patch->facets = ( cbrush_t * )fdata; fdata += patch->numfacets * sizeof( cbrush_t );
 		memcpy( patch->facets, facets, patch->numfacets * sizeof( cbrush_t ) );
 		for( i = 0, k = 0, facet = patch->facets; i < patch->numfacets; i++, facet++ ) {
-			cplane_t *planes;
 			cbrushside_t *s;
 
 			facet->brushsides = ( cbrushside_t * )fdata; fdata += facet->numsides * sizeof( cbrushside_t );
-			planes = ( cplane_t * )fdata; fdata += facet->numsides * sizeof( cplane_t );
 
 			for( j = 0, s = facet->brushsides; j < facet->numsides; j++, s++ ) {
-				planes[j] = brushplanes[k++];
-
-				s->plane = &planes[j];
-				SnapPlane( s->plane->normal, &s->plane->dist );
-				CategorizePlane( s->plane );
+				s->plane = brushplanes[k++];
+				SnapPlane( s->plane.normal, &s->plane.dist );
+				CategorizePlane( &s->plane );
 				s->surfFlags = shaderref->flags;
 			}
 		}
@@ -532,15 +528,26 @@ static void CMod_LoadSubmodels( cmodel_state_t *cms, lump_t *l ) {
 	cms->numcmodels = count;
 
 	for( i = 0; i < count; i++, in++, out++ ) {
+		out->faces = cms->map_faces;
 		out->nummarkfaces = LittleLong( in->numfaces );
-		out->markfaces = Mem_Alloc( cms->mempool, out->nummarkfaces * sizeof( cface_t * ) );
-		out->nummarkbrushes = LittleLong( in->numbrushes );
-		out->markbrushes = Mem_Alloc( cms->mempool, out->nummarkbrushes * sizeof( cbrush_t * ) );
+		out->markfaces = Mem_Alloc( cms->mempool, out->nummarkfaces * sizeof( *out->markfaces ) );
 
-		for( j = 0; j < out->nummarkfaces; j++ )
-			out->markfaces[j] = cms->map_faces + LittleLong( in->firstface ) + j;
-		for( j = 0; j < out->nummarkbrushes; j++ )
-			out->markbrushes[j] = cms->map_brushes + LittleLong( in->firstbrush ) + j;
+		out->brushes = cms->map_brushes;
+		out->nummarkbrushes = LittleLong( in->numbrushes );
+		out->markbrushes = Mem_Alloc( cms->mempool, out->nummarkbrushes * sizeof( *out->markbrushes ) );
+
+		if( out->nummarkfaces ) {
+			int firstface = LittleLong( in->firstface );
+			for( j = 0; j < out->nummarkfaces; j++ )
+				out->markfaces[j] = firstface + j;
+		}
+
+		if( out->nummarkbrushes ) {
+			int firstbrush = LittleLong( in->firstbrush );
+			for( j = 0; j < out->nummarkbrushes; j++ ) {
+				out->markbrushes[j] = firstbrush + j;
+			}
+		}
 
 		for( j = 0; j < 3; j++ ) {
 			// spread the mins / maxs by a pixel
@@ -589,7 +596,7 @@ static void CMod_LoadNodes( cmodel_state_t *cms, lump_t *l ) {
 static void CMod_LoadMarkFaces( cmodel_state_t *cms, lump_t *l ) {
 	int i, j;
 	int count;
-	cface_t **out;
+	int *out;
 	int *in;
 
 	in = ( void * )( cms->cmod_base + l->fileofs );
@@ -609,7 +616,7 @@ static void CMod_LoadMarkFaces( cmodel_state_t *cms, lump_t *l ) {
 		if( j < 0 || j >= cms->numfaces ) {
 			Com_Error( ERR_DROP, "CMod_LoadMarkFaces: bad surface number" );
 		}
-		out[i] = cms->map_faces + j;
+		out[i] = j;
 	}
 }
 
@@ -645,26 +652,25 @@ static void CMod_LoadLeafs( cmodel_state_t *cms, lump_t *l ) {
 
 		// OR brushes' contents
 		for( j = 0; j < out->nummarkbrushes; j++ )
-			out->contents |= out->markbrushes[j]->contents;
+			out->contents |= cms->map_brushes[out->markbrushes[j]].contents;
 
 		// exclude markfaces that have no facets
 		// so we don't perform this check at runtime
 		for( j = 0; j < out->nummarkfaces; ) {
 			k = j;
-			if( !out->markfaces[j]->facets ) {
-				for(; ( ++j < out->nummarkfaces ) && !out->markfaces[j]->facets; ) ;
+			if( !cms->map_faces[out->markfaces[j]].facets ) {
+				for(; ( ++j < out->nummarkfaces ) && !cms->map_faces[out->markfaces[j]].facets; ) ;
 				if( j < out->nummarkfaces ) {
 					memmove( &out->markfaces[k], &out->markfaces[j], ( out->nummarkfaces - j ) * sizeof( *out->markfaces ) );
 				}
 				out->nummarkfaces -= j - k;
-
 			}
 			j = k + 1;
 		}
 
 		// OR patches' contents
 		for( j = 0; j < out->nummarkfaces; j++ )
-			out->contents |= out->markfaces[j]->contents;
+			out->contents |= cms->map_faces[out->markfaces[j]].contents;
 
 		if( out->area >= cms->numareas ) {
 			cms->numareas = out->area + 1;
@@ -717,7 +723,7 @@ static void CMod_LoadPlanes( cmodel_state_t *cms, lump_t *l ) {
 static void CMod_LoadMarkBrushes( cmodel_state_t *cms, lump_t *l ) {
 	int i;
 	int count;
-	cbrush_t **out;
+	int *out;
 	int *in;
 
 	in = ( void * )( cms->cmod_base + l->fileofs );
@@ -733,7 +739,7 @@ static void CMod_LoadMarkBrushes( cmodel_state_t *cms, lump_t *l ) {
 	cms->nummarkbrushes = count;
 
 	for( i = 0; i < count; i++, in++ )
-		out[i] = cms->map_brushes + LittleLong( *in );
+		out[i] = LittleLong( *in );
 }
 
 /*
@@ -758,12 +764,14 @@ static void CMod_LoadBrushSides( cmodel_state_t *cms, lump_t *l ) {
 	cms->numbrushsides = count;
 
 	for( i = 0; i < count; i++, in++, out++ ) {
-		out->plane = cms->map_planes + LittleLong( in->planenum );
+		cplane_t *plane = cms->map_planes + LittleLong( in->planenum );
 		j = LittleLong( in->shadernum );
 		if( j >= cms->numshaderrefs ) {
 			Com_Error( ERR_DROP, "Bad brushside texinfo" );
 		}
+		out->plane = *plane;
 		out->surfFlags = cms->map_shaderrefs[j].flags;
+		CategorizePlane( &out->plane );
 	}
 }
 
@@ -789,12 +797,14 @@ static void CMod_LoadBrushSides_RBSP( cmodel_state_t *cms, lump_t *l ) {
 	cms->numbrushsides = count;
 
 	for( i = 0; i < count; i++, in++, out++ ) {
-		out->plane = cms->map_planes + LittleLong( in->planenum );
+		cplane_t *plane = cms->map_planes + LittleLong( in->planenum );
 		j = LittleLong( in->shadernum );
 		if( j >= cms->numshaderrefs ) {
 			Com_Error( ERR_DROP, "Bad brushside texinfo" );
 		}
+		out->plane = *plane;
 		out->surfFlags = cms->map_shaderrefs[j].flags;
+		CategorizePlane( &out->plane );
 	}
 }
 
@@ -825,7 +835,7 @@ static void CMod_LoadBrushes( cmodel_state_t *cms, lump_t *l ) {
 		out->contents = cms->map_shaderrefs[shaderref].contents;
 		out->numsides = LittleLong( in->numsides );
 		out->brushsides = cms->map_brushsides + LittleLong( in->firstside );
-		CM_BoundBrush( cms, out );
+		CM_BoundBrush( out );
 	}
 }
 
@@ -901,14 +911,5 @@ void CM_LoadQ3BrushModel( cmodel_state_t *cms, void *parent, void *buf, bspForma
 
 	if( cms->numvertexes ) {
 		Mem_Free( cms->map_verts );
-	}
-}
-
-void CM_BoundBrush( cmodel_state_t *cms, cbrush_t *brush ) {
-	int i;
-
-	for( i = 0; i < 3; i++ ) {
-		brush->mins[i] = -brush->brushsides[i * 2 + 0].plane->dist;
-		brush->maxs[i] = +brush->brushsides[i * 2 + 1].plane->dist;
 	}
 }

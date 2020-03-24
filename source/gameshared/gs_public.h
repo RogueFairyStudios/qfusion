@@ -29,22 +29,28 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 extern "C" {
 #endif
 
+typedef struct {
 #ifndef _MSC_VER
-extern void ( *module_Printf )( const char *format, ... ) __attribute__( ( format( printf, 1, 2 ) ) );
-extern void ( *module_Error )( const char *format, ... ) __attribute__( ( format( printf, 1, 2 ) ) ) __attribute__( ( noreturn ) );
+	void ( *Printf )( const char *format, ... ) __attribute__( ( format( printf, 1, 2 ) ) );
+	void ( *Error )( const char *format, ... ) __attribute__( ( format( printf, 1, 2 ) ) ) __attribute__( ( noreturn ) );
 #else
-extern void ( *module_Printf )( _Printf_format_string_ const char *format, ... );
-extern void ( *module_Error )( _Printf_format_string_ const char *format, ... );
+	void ( *Printf )( _Printf_format_string_ const char *format, ... );
+	void ( *Error )( _Printf_format_string_ const char *format, ... );
 #endif
 
-extern void *( *module_Malloc )( size_t size );
-extern void ( *module_Free )( void *data );
-extern void ( *module_Trace )( trace_t *t, vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int ignore, int contentmask, int timeDelta );
-extern entity_state_t *( *module_GetEntityState )( int entNum, int deltaTime );
-extern int ( *module_PointContents )( vec3_t point, int timeDelta );
-extern void ( *module_PredictedEvent )( int entNum, int ev, int parm );
-extern void ( *module_PMoveTouchTriggers )( pmove_t *pm, vec3_t previous_origin );
-extern const char *( *module_GetConfigString )( int index );
+	void *( *Malloc )( size_t size );
+	void ( *Free )( void *data );
+	void ( *Trace )( trace_t *t, vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int ignore, int contentmask, int timeDelta );
+	entity_state_t *( *GetEntityState )( int entNum, int deltaTime );
+	int ( *PointContents )( vec3_t point, int timeDelta );
+	void ( *PredictedEvent )( int entNum, int ev, int parm );
+	void ( *PMoveTouchTriggers )( pmove_t *pm, player_state_t *ps, vec3_t previous_origin );
+	void ( *RoundUpToHullSize )( vec3_t mins, vec3_t maxs );
+	const char *( *GetConfigString )( int index );
+	struct angelwrap_api_s *( *GetAngelExport )( void );
+} gs_module_api_t;
+
+extern gs_module_api_t gs_api;
 
 //===============================================================
 //		WARSOW player AAboxes sizes
@@ -140,6 +146,7 @@ typedef struct {
 	int maxclients;
 	char gametypeName[MAX_CONFIGSTRING_CHARS];
 	game_state_t gameState;
+	gs_module_api_t api;
 } gs_state_t;
 
 extern gs_state_t gs;
@@ -248,7 +255,7 @@ typedef struct {
 } move_t;
 
 int GS_SlideMove( move_t *move );
-void GS_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbounce );
+void GS_ClipVelocity( const vec3_t in, const vec3_t normal, vec3_t out, float overbounce );
 
 int GS_LinearMovement( const entity_state_t *ent, int64_t time, vec3_t dest );
 void GS_LinearMovementDelta( const entity_state_t *ent, int64_t oldTime, int64_t curTime, vec3_t dest );
@@ -269,7 +276,8 @@ enum {
 	GS_MAXBUNNIES
 };
 
-void Pmove( pmove_t *pmove );
+int PM_SlideMove( pmove_t *pmove );
+void PM_Pmove( pmove_t *pmove, player_state_t *ps, usercmd_t *cmd, void (*vaClampFn)( const player_state_t *, vec3_t ), void (*PmoveFn)( pmove_t *, player_state_t *, usercmd_t * ) );
 
 //===============================================================
 
@@ -540,6 +548,7 @@ int GS_Armor_PickupCountForTag( int tag );
 
 enum {
 	TEAM_SPECTATOR,
+	TEAM_MONSTERS,
 	TEAM_PLAYERS,
 	TEAM_ALPHA,
 	TEAM_BETA,
@@ -592,6 +601,9 @@ typedef struct {
 	int loopingframes[PMODEL_TOTAL_ANIMATIONS];
 	float frametime[PMODEL_TOTAL_ANIMATIONS];
 } gs_pmodel_animationset_t;
+	
+#define GS_EncodeAnimState(lower,upper,head) (((lower)&0x3F)|(((upper)&0x3F )<<6)|(((head)&0xF)<<12))
+#define GS_DecodeAnimState(frame,lower,upper,head) ( (lower)=((frame)&0x3F),(upper)=(((frame)>>6)&0x3F),(head)=(((frame)>>12)&0xF) )
 
 int GS_UpdateBaseAnims( entity_state_t *state, vec3_t velocity );
 void GS_PModel_AnimToFrame( int64_t curTime, gs_pmodel_animationset_t *animSet, gs_pmodel_animationstate_t *anim );
@@ -1001,6 +1013,9 @@ enum {
 	ET_VIDEO_SPEAKER,
 	ET_RADAR,       // same as ET_SPRITE but sets NO_DEPTH_TEST bit
 
+	ET_MONSTER_PLAYER,
+	ET_MONSTER_CORPSE,
+	
 	// eventual entities: types below this will get event treatment
 	ET_EVENT = EVENT_ENTITIES_START,
 	ET_SOUNDEVENT,
@@ -1103,17 +1118,26 @@ typedef struct {
 	firedef_t firedef_weak;
 } gs_weapon_definition_t;
 
+void GS_InitModule( int module, int maxClients, gs_module_api_t *api );
 gs_weapon_definition_t *GS_GetWeaponDef( int weapon );
 void GS_InitWeapons( void );
 int GS_SelectBestWeapon( player_state_t *playerState );
 bool GS_CheckAmmoInWeapon( player_state_t *playerState, int checkweapon );
 firedef_t *GS_FiredefForPlayerState( player_state_t *playerState, int checkweapon );
 int GS_ThinkPlayerWeapon( player_state_t *playerState, int buttons, int msecs, int timeDelta );
-trace_t *GS_TraceBullet( trace_t    *trace, vec3_t start, vec3_t dir, float r, float u, int range, int ignore, int timeDelta );
+
+/*
+* GS_TraceBullet
+*
+* Assumes fv, rv and uv form an orthonormal basis.
+*/
+trace_t *GS_TraceBullet( trace_t *trace, vec3_t start, const vec3_t fv, const vec3_t rv, const vec3_t uv, 
+	float r, float u, int range, int ignore, int timeDelta );
+
 void GS_TraceLaserBeam( trace_t *trace, vec3_t origin, vec3_t angles, float range, int ignore, int timeDelta, void ( *impact )( trace_t *tr, vec3_t dir ) );
 void GS_TraceCurveLaserBeam( trace_t *trace, vec3_t origin, vec3_t angles, vec3_t blendPoint, int ignore, int timeDelta, void ( *impact )( trace_t *tr, vec3_t dir ) );
 
-#define CURVELASERBEAM_SUBDIVISIONS 6
+#define CURVELASERBEAM_SUBDIVISIONS 40
 #define CURVELASERBEAM_BACKTIME     60
 #define LASERGUN_WEAK_TRAIL_BACKUP  32 // 0.5 second backup at 62 fps, which is the ucmd fps ratio
 #define LASERGUN_WEAK_TRAIL_MASK    ( LASERGUN_WEAK_TRAIL_BACKUP - 1 )

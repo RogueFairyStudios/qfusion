@@ -1,14 +1,14 @@
 #ifndef __UI_GAMETYPES_DATASOURCE_H__
 #define __UI_GAMETYPES_DATASOURCE_H__
 
-#include <Rocket/Controls/DataSource.h>
+#include <RmlUi/Controls/DataSource.h>
 
 namespace WSWUI
 {
 /// Provides information about game types (full name and id).
 /// Used in the "start local game" screen to populate the game type
 /// dropdown select box with data.
-class GameTypesDataSource : public Rocket::Controls::DataSource
+class GameTypesDataSource : public Rml::Controls::DataSource
 {
 public:
 	/// Reads the available game types from /progs/gametypes
@@ -24,10 +24,10 @@ public:
 	///  - the name of the gametype corresponding to row_index if the
 	///    value of the element is "name"
 	///  - an empty string in all the other cases
-	virtual void GetRow( Rocket::Core::StringList &row, const Rocket::Core::String&, int row_index, const Rocket::Core::StringList& cols );
+	virtual void GetRow( Rml::Core::StringList &row, const Rml::Core::String&, int row_index, const Rml::Core::StringList& cols );
 
 	/// Returns the number of the available game types
-	virtual int GetNumRows( const Rocket::Core::String &table );
+	virtual int GetNumRows( const Rml::Core::String &table );
 
 private:
 	struct gametype {
@@ -37,16 +37,6 @@ private:
 
 		gametype() : name( "" ), title( "" ), description( "" ) {};
 		gametype( const std::string &name ) : name( name ), title( name ), description( "" ) {};
-	};
-
-	struct cmp_gametypes_by_id {
-		typedef gametype first_argument_type;
-		typedef std::string second_argument_type;
-		typedef bool result_type;
-
-		result_type operator()( const gametype &lhs, const std::string &rhs ) const {
-			return lhs.name == rhs;
-		}
 	};
 
 	typedef std::vector<gametype> GameTypeList;

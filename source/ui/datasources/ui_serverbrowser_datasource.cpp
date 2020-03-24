@@ -13,28 +13,10 @@ namespace WSWUI
 // TODO: constify
 #define TABLE_NAME_NORMAL   "normal"
 #define TABLE_NAME_INSTA    "instagib"
-#define TABLE_NAME_TV       "tv"
 #define TABLE_NAME_RACE     "race"
 #define TABLE_NAME_FAVORITES "favorites"
 
 #define TABLE_SUFFIX_SUGGESTIONS "_suggestions"
-
-//=====================================
-
-namespace
-{
-
-void DEBUG_PRINT_SERVERINFO( const ServerInfo &info ) {
-	Com_Printf( "^6Serverinfo:\n%s %s %s %d/%d %s %s %d %d %d %d %d\n",
-				info.address.c_str(), info.hostname.c_str(), info.map.c_str(),
-				info.curuser, info.maxuser, info.gametype.c_str(),
-				info.modname.c_str(), int(info.instagib), info.skilllevel,
-				int(info.password), int(info.mm), info.ping );
-}
-
-// TODO: move this as general utility
-
-}
 
 //=====================================
 
@@ -43,7 +25,7 @@ ServerInfo::ServerInfo( const char *adr, const char *info )
 	:   has_changed( false ), ping_updated( false ), has_ping( false ), address( adr ),
 	iaddress( addr_to_int( adr ) ), hostname( "" ), cleanname( "" ), map( "" ), curuser( 0 ),
 	maxuser( 0 ), bots( 0 ), gametype( "" ), modname( "" ), instagib( false ), race( false ), skilllevel( 0 ),
-	password( false ), mm( false ), tv( false ), ping( 0 ), ping_retries( 0 ), favorite( false ) {
+	password( false ), mm( false ), ping( 0 ), ping_retries( 0 ), favorite( false ) {
 	if( info ) {
 		fromInfo( info );
 	}
@@ -78,7 +60,6 @@ void ServerInfo::fromOther( const ServerInfo &other ) {
 	skilllevel = other.skilllevel;
 	password = other.password;
 	mm = other.mm;
-	tv = other.tv;
 	ping = other.ping;
 	ping_retries = other.ping_retries;
 	favorite = other.favorite;
@@ -208,14 +189,6 @@ void ServerInfo::fromInfo( const char *info ) {
 			if( !trim.fail() && tmpmod != modname ) {
 				has_changed = true;
 				modname = tmpmod;
-			}
-		} else if( cmd == "tv" ) {   // TV SERVER
-			int tmptv;
-			std::stringstream toint( value );
-			toint >> tmptv;
-			if( !toint.fail() && ( tmptv != 0 ) != tv ) {
-				has_changed = true;
-				tv = tmptv != 0;
 			}
 		} else if( cmd == "r" ) {   // RACE
 			int tmprace;
@@ -418,7 +391,7 @@ void ServerInfoFetcher::startQuery( const std::string &adr ) {
 // ServerBrowserDataSource
 
 ServerBrowserDataSource::ServerBrowserDataSource() :
-	Rocket::Controls::DataSource( "serverbrowser_source" ),
+	Rml::Controls::DataSource( "serverbrowser_source" ),
 	serverList(),
 	fetcher(), active( false ), updateId( 0 ), lastActiveTime( 0 ),
 	lastUpdateTime( 0 ) {
@@ -438,7 +411,7 @@ ServerBrowserDataSource::~ServerBrowserDataSource() {
 }
 
 // override rocket methods
-void ServerBrowserDataSource::GetRow( StringList &row, const String &table, int row_index, const StringList &columns ) {
+void ServerBrowserDataSource::GetRow( Rml::Core::StringList &row, const std::string &table, int row_index, const Rml::Core::StringList &columns ) {
 	if( referenceListMap.find( table ) == referenceListMap.end() ) {
 		return;
 	}
@@ -458,7 +431,7 @@ void ServerBrowserDataSource::GetRow( StringList &row, const String &table, int 
 	}
 
 	const ServerInfo &info = *( *it_info );
-	for( StringList::const_iterator it = columns.begin(); it != columns.end(); ++it ) {
+	for( Rml::Core::StringList::const_iterator it = columns.begin(); it != columns.end(); ++it ) {
 		// TODO: htmlencode here! "<>& etc..
 		if( *it == "hostname" ) {
 			row.push_back( info.hostname.c_str() );
@@ -471,7 +444,7 @@ void ServerBrowserDataSource::GetRow( StringList &row, const String &table, int 
 		} else if( *it == "bots" ) {
 			row.push_back( va( "%d", info.bots ) );
 		} else if( *it == "gametype" ) {
-			row.push_back( info.tv ? "TV" : info.gametype.c_str() );
+			row.push_back( info.gametype.c_str() );
 		} else if( *it == "instagib" ) {
 			row.push_back( info.instagib ? "yes" : "no" );
 		} else if( *it == "skilllevel" ) {
@@ -484,8 +457,6 @@ void ServerBrowserDataSource::GetRow( StringList &row, const String &table, int 
 			row.push_back( va( "%d", info.ping ) );
 		} else if( *it == "address" ) {
 			row.push_back( info.address.c_str() );
-		} else if( *it == "tv" ) {
-			row.push_back( info.tv ? "yes" : "no" );
 		} else if( *it == "favorite" ) {
 			row.push_back( info.favorite ? "yes" : "no" );
 		} else if( *it == "flags" ) {
@@ -504,17 +475,15 @@ void ServerBrowserDataSource::GetRow( StringList &row, const String &table, int 
 }
 
 // this should return the number of rows in 'table'
-int ServerBrowserDataSource::GetNumRows( const String &table ) {
+int ServerBrowserDataSource::GetNumRows( const std::string &table ) {
 	if( referenceListMap.find( table ) == referenceListMap.end() ) {
 		return 0;
 	}
 	return referenceListMap[table].size();
 }
 
-void ServerBrowserDataSource::tableNameForServerInfo( const ServerInfo &info, String &table ) const {
-	if( info.tv ) {
-		table = TABLE_NAME_TV;
-	} else if( info.instagib ) {
+void ServerBrowserDataSource::tableNameForServerInfo( const ServerInfo &info, std::string &table ) const {
+	if( info.instagib ) {
 		table = TABLE_NAME_INSTA;
 	} else if( info.race ) {
 		table = TABLE_NAME_RACE;
@@ -523,7 +492,7 @@ void ServerBrowserDataSource::tableNameForServerInfo( const ServerInfo &info, St
 	}
 }
 
-void ServerBrowserDataSource::addServerToTable( ServerInfo &info, const String &tableName ) {
+void ServerBrowserDataSource::addServerToTable( ServerInfo &info, const std::string &tableName ) {
 	ReferenceList &referenceList = referenceListMap[tableName];
 
 	// Show/sort with referenceList
@@ -548,7 +517,7 @@ void ServerBrowserDataSource::addServerToTable( ServerInfo &info, const String &
 	}
 }
 
-void ServerBrowserDataSource::removeServerFromTable( ServerInfo &info, const String &tableName ) {
+void ServerBrowserDataSource::removeServerFromTable( ServerInfo &info, const std::string &tableName ) {
 	ReferenceList &referenceList = referenceListMap[tableName];
 
 	// notify rocket + remove from referenceList
@@ -580,11 +549,9 @@ void ServerBrowserDataSource::updateFrame() {
 			// yes this is safe, its only a pointer
 			referenceQueue.pop_front();
 
-			// DEBUG_PRINT_SERVERINFO( serverInfo );
-
 			// put to the visible list if it passes the filters
 			if( filter.filterServer( serverInfo ) ) {
-				String tableName;
+				std::string tableName;
 
 				tableNameForServerInfo( serverInfo, tableName );
 				addServerToTable( serverInfo, tableName );
@@ -669,7 +636,7 @@ void ServerBrowserDataSource::addToServerList( const char *adr, const char *info
 	if( !newInfo.hasPing() && ( it_inserted.second || !serverInfo.isChanged() ) ) {
 		// check if we want to drop this
 		if( serverInfo.ping_retries++ >= MAX_RETRIES ) {
-			String tableName;
+			std::string tableName;
 
 			tableNameForServerInfo( serverInfo, tableName );
 
@@ -734,7 +701,7 @@ void ServerBrowserDataSource::stopUpdate( void ) {
 }
 
 void ServerBrowserDataSource::compileSuggestionsList( void ) {
-	std::map<String, ReferenceListMap> suggestedServers;
+	std::map<std::string, ReferenceListMap> suggestedServers;
 
 	// for each table, compile the list of suggested servers,
 	// ignoring full and passworded servers
@@ -745,7 +712,7 @@ void ServerBrowserDataSource::compileSuggestionsList( void ) {
 		ReferenceList &referenceList = it->second;
 		for( ReferenceList::iterator it_ = referenceList.begin(); it_ != referenceList.end(); ++it_ ) {
 			ServerInfo *info = *it_;
-			String gametype = info->gametype.c_str();
+			std::string gametype = info->gametype.c_str();
 
 			if( info->password ) {
 				continue;
@@ -784,7 +751,7 @@ void ServerBrowserDataSource::compileSuggestionsList( void ) {
 	}
 
 	// compile the final list sorted by player count in descending order
-	for( std::map<String, ReferenceListMap>::iterator it = suggestedServers.begin(); it != suggestedServers.end(); ++it ) {
+	for( std::map<std::string, ReferenceListMap>::iterator it = suggestedServers.begin(); it != suggestedServers.end(); ++it ) {
 		ReferenceListMap &gtServers = it->second;
 
 		if( gtServers.empty() ) {
@@ -891,7 +858,7 @@ void ServerBrowserDataSource::notifyOfFavoriteChange( uint64_t iaddr, bool add )
 	info->favorite = add;
 
 	// tell libRocket we've updated the table row
-	String tableName;
+	std::string tableName;
 	tableNameForServerInfo( *it_s, tableName );
 	ReferenceList &referenceList = referenceListMap[tableName];
 

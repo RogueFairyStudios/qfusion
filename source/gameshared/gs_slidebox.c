@@ -39,7 +39,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 /*
 * GS_ClipVelocity
 */
-void GS_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbounce ) {
+void GS_ClipVelocity( const vec3_t in, const vec3_t normal, vec3_t out, float overbounce ) {
 	float backoff;
 	float change;
 	int i;
@@ -91,7 +91,7 @@ int GS_LinearMovement( const entity_state_t *ent, int64_t time, vec3_t dest ) {
 
 		VectorSubtract( ent->linearMovementEnd, ent->linearMovementBegin, dist );
 		moveFrac = (float)moveTime / (float)ent->linearMovementDuration;
-		clamp( moveFrac, 0, 1 );
+		Q_clamp( moveFrac, 0, 1 );
 		VectorMA( ent->linearMovementBegin, moveFrac, dist, dest );
 	} else {
 		moveFrac = moveTime * 0.001f;
@@ -184,7 +184,7 @@ static void GS_AddClippingPlane( move_t *move, const vec3_t planeNormal ) {
 	}
 
 	if( move->numClipPlanes + 1 == MAX_SLIDEMOVE_CLIP_PLANES ) {
-		module_Error( "GS_AddTouchPlane: MAX_SLIDEMOVE_CLIP_PLANES reached\n" );
+		gs.api.Error( "GS_AddTouchPlane: MAX_SLIDEMOVE_CLIP_PLANES reached\n" );
 	}
 
 	// add the plane
@@ -201,7 +201,7 @@ static int GS_SlideMoveClipMove( move_t *move /*, const bool stepping*/ ) {
 	int blockedmask = 0;
 
 	VectorMA( move->origin, move->remainingTime, move->velocity, endpos );
-	module_Trace( &trace, move->origin, move->mins, move->maxs, endpos, move->passent, move->contentmask, 0 );
+	gs.api.Trace( &trace, move->origin, move->mins, move->maxs, endpos, move->passent, move->contentmask, 0 );
 	if( trace.allsolid ) {
 		if( trace.ent > 0 ) {
 			GS_AddTouchEnt( move, trace.ent );
@@ -273,7 +273,7 @@ int GS_SlideMove( move_t *move ) {
 #ifdef CHECK_TRAPPED
 		{
 			trace_t trace;
-			module_Trace( &trace, move->origin, move->mins, move->maxs, move->origin, move->passent, move->contentmask, 0 );
+			gs.api.Trace( &trace, move->origin, move->mins, move->maxs, move->origin, move->passent, move->contentmask, 0 );
 			if( trace.startsolid ) {
 				blockedmask |= SLIDEMOVEFLAG_TRAPPED;
 			}
@@ -283,7 +283,7 @@ int GS_SlideMove( move_t *move ) {
 		// can't continue
 		if( blockedmask & SLIDEMOVEFLAG_TRAPPED ) {
 #ifdef CHECK_TRAPPED
-			module_Printf( "GS_SlideMove SLIDEMOVEFLAG_TRAPPED\n" );
+			gs.api.Printf( "GS_SlideMove SLIDEMOVEFLAG_TRAPPED\n" );
 #endif
 			move->remainingTime = 0.0f;
 			VectorCopy( lastValidOrigin, move->origin );
@@ -299,7 +299,7 @@ int GS_SlideMove( move_t *move ) {
 
 		// if it didn't touch anything the move should be completed
 		if( move->remainingTime > 0.0f ) {
-			module_Printf( "slidemove finished with remaining time\n" );
+			gs.api.Printf( "slidemove finished with remaining time\n" );
 			move->remainingTime = 0.0f;
 		}
 

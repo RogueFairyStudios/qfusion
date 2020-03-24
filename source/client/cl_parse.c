@@ -312,7 +312,7 @@ static size_t CL_WebDownloadReadCb( const void *buf, size_t numb, float percenta
 	// of resumed downloads
 	cls.download.offset += write;
 	cls.download.percent = (double)cls.download.offset / (double)cls.download.size;
-	clamp( cls.download.percent, 0, 1 );
+	Q_clamp( cls.download.percent, 0, 1 );
 
 	Cvar_ForceSet( "cl_download_percent", va( "%.1f", cls.download.percent * 100 ) );
 
@@ -573,7 +573,7 @@ static void CL_InitServerDownload( const char *filename, int size, unsigned chec
 	cls.download.timeout = Sys_Milliseconds() + 3000;
 	cls.download.retries = 0;
 
-	CL_AddReliableCommand( va( "nextdl \"%s\" %i", cls.download.name, cls.download.offset ) );
+	CL_AddReliableCommand( va( "nextdl \"%s\" %zu", cls.download.name, cls.download.offset ) );
 }
 
 /*
@@ -651,7 +651,7 @@ static void CL_RetryDownload( void ) {
 		CL_DownloadDone();
 	} else {
 		cls.download.timeout = Sys_Milliseconds() + 3000;
-		CL_AddReliableCommand( va( "nextdl \"%s\" %i", cls.download.name, cls.download.offset ) );
+		CL_AddReliableCommand( va( "nextdl \"%s\" %zu", cls.download.name, cls.download.offset ) );
 	}
 }
 
@@ -770,7 +770,7 @@ static void CL_ParseDownload( msg_t *msg ) {
 	msg->readcount += size;
 	cls.download.offset += size;
 	cls.download.percent = (double)cls.download.offset / (double)cls.download.size;
-	clamp( cls.download.percent, 0, 1 );
+	Q_clamp( cls.download.percent, 0, 1 );
 
 	Cvar_ForceSet( "cl_download_percent", va( "%.1f", cls.download.percent * 100 ) );
 
@@ -778,7 +778,7 @@ static void CL_ParseDownload( msg_t *msg ) {
 		cls.download.timeout = Sys_Milliseconds() + 3000;
 		cls.download.retries = 0;
 
-		CL_AddReliableCommand( va( "nextdl \"%s\" %i", cls.download.name, cls.download.offset ) );
+		CL_AddReliableCommand( va( "nextdl \"%s\" %zu", cls.download.name, cls.download.offset ) );
 	} else {
 		Com_Printf( "Download complete: %s\n", cls.download.name );
 
@@ -805,7 +805,7 @@ SERVER CONNECTING MESSAGES
 static void CL_ParseServerData( msg_t *msg ) {
 	const char *str, *gamedir;
 	int i, sv_bitflags, numpure;
-	int http_portnum;
+	unsigned short http_portnum;
 	bool old_sv_pure;
 
 	Com_DPrintf( "Serverdata packet received.\n" );
@@ -872,14 +872,6 @@ static void CL_ParseServerData( msg_t *msg ) {
 
 	sv_bitflags = MSG_ReadUint8( msg );
 
-	if( cls.demo.playing ) {
-		cls.reliable = ( sv_bitflags & SV_BITFLAGS_RELIABLE );
-	} else {
-		if( cls.reliable != ( ( sv_bitflags & SV_BITFLAGS_RELIABLE ) != 0 ) ) {
-			Com_Error( ERR_DROP, "Server and client disagree about connection reliability" );
-		}
-	}
-
 	// builting HTTP server port
 	if( cls.httpbaseurl ) {
 		Mem_Free( cls.httpbaseurl );
@@ -932,7 +924,6 @@ static void CL_ParseServerData( msg_t *msg ) {
 	old_sv_pure = cls.sv_pure;
 	cls.sv_pure = ( sv_bitflags & SV_BITFLAGS_PURE ) != 0;
 	cls.pure_restart = cls.sv_pure && old_sv_pure == false;
-	cls.sv_tv = ( sv_bitflags & SV_BITFLAGS_TVSERVER ) != 0;
 
 #ifdef PURE_CHEAT
 	cls.sv_pure = cls.pure_restart = false;
@@ -980,7 +971,7 @@ static void CL_ParseFrame( msg_t *msg ) {
 
 				// write out messages to hold the startup information
 				SNAP_BeginDemoRecording( cls.demo.file, 0x10000 + cl.servercount, cl.snapFrameTime,
-										 cl.servermessage, cls.reliable ? SV_BITFLAGS_RELIABLE : 0, cls.purelist,
+										 cl.servermessage, 0, cls.purelist,
 										 cl.configstrings[0], cl_baselines );
 
 				// the rest of the demo file will be individual frames
@@ -1012,7 +1003,7 @@ static void CL_ParseFrame( msg_t *msg ) {
 				}
 			}
 
-			clamp( delta, cl.newServerTimeDelta - (int)cl.snapFrameTime, cl.newServerTimeDelta + (int)cl.snapFrameTime );
+			Q_clamp( delta, cl.newServerTimeDelta - (int)cl.snapFrameTime, cl.newServerTimeDelta + (int)cl.snapFrameTime );
 
 			cl.serverTimeDeltas[cl.receivedSnapNum & MASK_TIMEDELTAS_BACKUP] = delta;
 		}
@@ -1020,14 +1011,6 @@ static void CL_ParseFrame( msg_t *msg ) {
 }
 
 //========= StringCommands================
-
-/*
-* CL_Multiview_f
-*/
-static void CL_Multiview_f( void ) {
-	cls.mv = ( atoi( Cmd_Argv( 1 ) ) != 0 );
-	Com_Printf( "multiview: %i\n", cls.mv );
-}
 
 /*
 * CL_CvarInfoRequest_f
@@ -1149,7 +1132,6 @@ svcmd_t svcmds[] =
 	{ "cs", CL_ParseConfigstringCommand },
 	{ "disconnect", CL_ServerDisconnect_f },
 	{ "initdownload", CL_InitDownload_f },
-	{ "multiview", CL_Multiview_f },
 	{ "cvarinfo", CL_CvarInfoRequest_f },
 
 	{ NULL, NULL }
@@ -1206,6 +1188,7 @@ void CL_ParseServerMessage( msg_t *msg ) {
 	while( msg->readcount < msg->cursize ) {
 		int cmd;
 		int ext, len;
+		int cmdNum;
 		size_t meta_data_maxsize;
 
 		cmd = MSG_ReadUint8( msg );
@@ -1232,19 +1215,17 @@ void CL_ParseServerMessage( msg_t *msg ) {
 				break;
 
 			case svc_servercmd:
-				if( !cls.reliable ) {
-					int cmdNum = MSG_ReadInt32( msg );
-					if( cmdNum < 0 ) {
-						Com_Error( ERR_DROP, "CL_ParseServerMessage: Invalid cmdNum value received: %i\n",
-								   cmdNum );
-						return;
-					}
-					if( cmdNum <= cls.lastExecutedServerCommand ) {
-						MSG_ReadString( msg ); // read but ignore
-						break;
-					}
-					cls.lastExecutedServerCommand = cmdNum;
+				cmdNum = MSG_ReadInt32( msg );
+				if( cmdNum < 0 ) {
+					Com_Error( ERR_DROP, "CL_ParseServerMessage: Invalid cmdNum value received: %i\n",
+							   cmdNum );
+					return;
 				}
+				if( cmdNum <= cls.lastExecutedServerCommand ) {
+					MSG_ReadString( msg ); // read but ignore
+					break;
+				}
+				cls.lastExecutedServerCommand = cmdNum;
 			// fall through
 			case svc_servercs: // configstrings from demo files. they don't have acknowledge
 				CL_ParseServerCommand( msg );
@@ -1268,10 +1249,6 @@ void CL_ParseServerMessage( msg_t *msg ) {
 				break;
 
 			case svc_clcack:
-				if( cls.reliable ) {
-					Com_Error( ERR_DROP, "CL_ParseServerMessage: clack message for reliable client\n" );
-					return;
-				}
 				cls.reliableAcknowledge = MSG_ReadUintBase128( msg );
 				cls.ucmdAcknowledged = MSG_ReadUintBase128( msg );
 				if( cl_debug_serverCmd->integer & 4 ) {
@@ -1330,7 +1307,7 @@ void CL_ParseServerMessage( msg_t *msg ) {
 	}
 
 	if( cl_debug_serverCmd->integer & 4 ) {
-		Com_Printf( "%3i:CMD %i %s\n", msg->readcount, -1, "EOF" );
+		Com_Printf( "%3zu:CMD %i %s\n", msg->readcount, -1, "EOF" );
 	}
 	SHOWNET( msg, "END OF MESSAGE" );
 

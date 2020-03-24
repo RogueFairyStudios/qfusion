@@ -89,7 +89,7 @@ static void SCB_ParsePlayerStats( const char **s ) {
 	memset( scb_player_stats, -1, sizeof( scb_player_stats ) );
 	j = 0;
 
-#define STATS_PERCENT( hit,total ) ( ( hit ) > 0 && ( total > 0 ) ? ( ( hit ) == ( total ) ? 100 : ( min( (int)( floor( ( 100.0f * ( hit ) ) / ( (float)( total ) ) + 0.5f ) ), 99 ) ) ) : -1 )
+#define STATS_PERCENT( hit,total ) ( ( hit ) > 0 && ( total > 0 ) ? ( ( hit ) == ( total ) ? 100 : ( (int)fmin( (int)( floor( ( 100.0f * ( hit ) ) / ( (float)( total ) ) + 0.5f ) ), 99 ) ) ) : -1 )
 
 	for( i = WEAP_GUNBLADE; i < WEAP_TOTAL; i++ ) {
 		weak = j++;
@@ -846,7 +846,7 @@ static int SCR_DrawPlayerTab( const char **ptrptr, int team, int x, int y, int p
 
 			case 'r': // is a ready state tick that is hidden when not in warmup
 				if( atoi( token ) ) {
-					icon = CG_MediaShader( cgs.media.shaderVSayIcon[VSAY_YES] );
+					icon = cgs.media.shaderVSayIcon[VSAY_YES];
 				}
 				break;
 		}
@@ -1042,7 +1042,7 @@ void SCR_UpdatePlayerStatsMessage( const char *string ) {
 * CG_ToggleScores_f
 */
 void CG_ToggleScores_f( void ) {
-	if( cgs.demoPlaying || cg.frame.multipov || cgs.tv ) {
+	if( cgs.demoPlaying || cg.frame.multipov ) {
 		cg.showScoreboard = !cg.showScoreboard;
 	} else {
 		trap_Cmd_ExecuteText( EXEC_NOW, "svscore" );
@@ -1053,7 +1053,7 @@ void CG_ToggleScores_f( void ) {
 * CG_ScoresOn_f
 */
 void CG_ScoresOn_f( void ) {
-	if( cgs.demoPlaying || cg.frame.multipov || cgs.tv ) {
+	if( cgs.demoPlaying || cg.frame.multipov ) {
 		cg.showScoreboard = true;
 	} else {
 		trap_Cmd_ExecuteText( EXEC_NOW, "svscore 1" );
@@ -1064,7 +1064,7 @@ void CG_ScoresOn_f( void ) {
 * CG_ScoresOff_f
 */
 void CG_ScoresOff_f( void ) {
-	if( cgs.demoPlaying || cg.frame.multipov || cgs.tv ) {
+	if( cgs.demoPlaying || cg.frame.multipov ) {
 		cg.showScoreboard = false;
 	} else {
 		trap_Cmd_ExecuteText( EXEC_NOW, "svscore 0" );
@@ -1083,7 +1083,7 @@ bool CG_IsScoreboardShown( void ) {
 		return false;
 	}
 
-	if( cgs.demoPlaying || cg.frame.multipov || cgs.tv ) {
+	if( cgs.demoPlaying || cg.frame.multipov ) {
 		return cg.showScoreboard || ( GS_MatchState() > MATCH_STATE_PLAYTIME );
 	}
 
